@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"runtime"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
@@ -46,8 +43,9 @@ type mirrorMessage struct {
 }
 
 type mirrorKeyboardState struct {
-	pid        uint32
-	escapeHeld bool // Used only on the hook's message-loop thread.
+	pid          uint32
+	view         *mirrorView
+	shortcutHeld uint32
 }
 
 func mirrorIsFullscreen(window uintptr) bool {
@@ -83,60 +81,42 @@ func mirrorModifiersDown() bool {
 
 func handleMirrorKey(code int32, message uintptr, key *uint32) uintptr {
 	state := mirrorKeys.Load()
-	if code == 0 && state != nil && *key == 0x1b {
-		if state.escapeHeld {
-			if message == 0x101 || message == 0x105 { // key up / system key up
-				state.escapeHeld = false
+	if code == 0 && state != nil && state.view != nil {
+		v := state.view
+		if state.shortcutHeld == *key {
+			if message == 0x101 || message == 0x105 {
+				state.shortcutHeld = 0
 			}
-			return 1 // Also consume repeats and the matching release.
+			return 1
 		}
-		if message == 0x100 && !mirrorModifiersDown() { // plain WM_KEYDOWN
-			window, _, _ := mirrorForeground.Call()
-			var pid uint32
-			mirrorWindowPID.Call(window, uintptr(unsafe.Pointer(&pid)))
-			if pid == state.pid && mirrorIsFullscreen(window) {
-				// scrcpy v5.0 handles F11; send it directly to this window.
-				ok, _, _ := mirrorPostMessage.Call(window, 0x100, 0x7a, 0x00570001)
-				if ok != 0 {
-					mirrorPostMessage.Call(window, 0x101, 0x7a, 0xc0570001)
-					state.escapeHeld = true
-					return 1
-				}
+		foreground, _, _ := mirrorForeground.Call()
+		root, _, _ := mirrorUser32.NewProc("GetAncestor").Call(foreground, 2)
+		if v.window != 0 && (foreground == v.window || root == v.window) && (message == 0x100 || message == 0x104) {
+			command := uintptr(0)
+			if *key == 0x7a && !mirrorModifiersDown() {
+				command = 1
+			}
+			if *key == 0x1b && v.fullscreen && !v.menuOpen && !mirrorModifiersDown() {
+				command = 3
+			}
+			alt, _, _ := mirrorKeyState.Call(0x12)
+			ctrl, _, _ := mirrorKeyState.Call(0x11)
+			shift, _, _ := mirrorKeyState.Call(0x10)
+			if *key == 'Z' && alt&0x8000 != 0 && ctrl&0x8000 == 0 && shift&0x8000 == 0 {
+				command = 2
+			}
+			if *key == 'F' && alt&0x8000 != 0 && ctrl&0x8000 == 0 && shift&0x8000 == 0 {
+				command = 1
+			}
+			if command != 0 {
+				mirrorPostMessage.Call(v.window, 0x8001, command, 0)
+				state.shortcutHeld = *key
+				return 1
 			}
 		}
+		r, _, _ := mirrorNextHook.Call(0, uintptr(code), message, uintptr(unsafe.Pointer(key)))
+		return r
 	}
 	result, _, _ := mirrorNextHook.Call(0, uintptr(code), message, uintptr(unsafe.Pointer(key)))
 	return result
-}
-
-// Only the foreground fullscreen window belonging to this session consumes Esc.
-// In windowed mode scrcpy retains its normal Android Back shortcut.
-func runMirrorShortcuts(ctx context.Context, pid int) error {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	var message mirrorMessage
-	mirrorPeekMessage.Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0, 0) // create queue
-	thread, _, _ := mirrorThreadID.Call()
-	module, _, _ := mirrorModule.Call(0)
-	state := &mirrorKeyboardState{pid: uint32(pid)}
-	mirrorKeys.Store(state)
-	defer mirrorKeys.CompareAndSwap(state, nil)
-	hook, _, err := mirrorSetHook.Call(13, mirrorKeyCallback, module, 0) // WH_KEYBOARD_LL
-	if hook == 0 {
-		return fmt.Errorf("安装投屏 Esc 快捷键: %w", err)
-	}
-	defer mirrorUnhook.Call(hook)
-	stop := context.AfterFunc(ctx, func() { mirrorPostThread.Call(thread, 0x12, 0, 0) }) // WM_QUIT
-	defer stop()
-	for {
-		result, _, err := mirrorGetMessage.Call(uintptr(unsafe.Pointer(&message)), 0, 0, 0)
-		if result == 0 {
-			return nil
-		}
-		if int32(result) == -1 {
-			return fmt.Errorf("投屏快捷键消息循环: %w", err)
-		}
-		mirrorTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))
-		mirrorDispatchMessage.Call(uintptr(unsafe.Pointer(&message)))
-	}
 }

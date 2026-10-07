@@ -157,7 +157,7 @@ func TestChildProcessArgumentsAndStop(t *testing.T) {
 	t.Setenv("SCRCPY_GUI_TEST_CHILD", "exit")
 	t.Setenv("SCRCPY_GUI_TEST_ARGS", file)
 	b := &backend{adb: exe, scrcpy: exe}
-	playback := playbackOptions{BufferMS: 3000, Fullscreen: true, Stretch: true, TurnScreenOff: true, KeyboardUHID: true}
+	playback := playbackOptions{BufferMS: 3000, Fullscreen: true, ScaleMode: string(scaleStretch), TurnScreenOff: true, KeyboardUHID: true}
 	out, err := b.runADB(context.Background(), "-s", "192.168.1.10:5555", "get-state")
 	if err != nil || out != "device\n" {
 		t.Fatalf("adb subprocess: %q %v", out, err)
@@ -211,7 +211,7 @@ func TestAudioOnlyArgumentsAndScreenPower(t *testing.T) {
 			for _, screenOff := range []bool{false, true} {
 				args := strings.Join(presets[4].args("phone", playbackOptions{
 					AudioOnly: true, AudioBitrateKbps: p.BitrateKbps, BufferMS: ms,
-					TurnScreenOff: screenOff, KeyboardUHID: true, Fullscreen: true, Stretch: true,
+					TurnScreenOff: screenOff, KeyboardUHID: true, Fullscreen: true, ScaleMode: string(scaleStretch),
 				}), " ")
 				for _, flag := range []string{"--no-video", "--no-window", "--require-audio", "--audio-codec=opus", fmt.Sprintf("--audio-bit-rate=%dK", p.BitrateKbps)} {
 					if !strings.Contains(args, flag) {

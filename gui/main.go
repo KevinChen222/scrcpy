@@ -58,7 +58,7 @@ func newApplication(ctx context.Context, b *backend) *application {
 	a := &application{ctx: ctx, b: b, updates: make(chan func(), 16), preset: 1,
 		custom:      [2]customPreset{{"1600", "60", "6"}, {"0", "120", "40"}},
 		audioPreset: 1, customAudio: "128", customBuffer: "2", logs: &sessionLog{},
-		playback: playbackOptions{BufferMS: 2000, KeyboardUHID: true, AudioCodec: "opus"}, networks: localNetworks(), status: "准备就绪"}
+		playback: playbackOptions{BufferMS: 2000, KeyboardUHID: true, AudioCodec: "opus", ScaleMode: string(scaleFit)}, networks: localNetworks(), status: "准备就绪"}
 	if b != nil {
 		b.logs = a.logs
 	}
@@ -265,6 +265,9 @@ func (a *application) start() {
 	if playback.AudioOnly {
 		message = "正在启动音频…"
 	}
+	if !playback.AudioOnly {
+		playback.Frames = &mirrorFrames{}
+	}
 	a.work(message, func(ctx context.Context) (func(), error) {
 		serial := chosen.Serial
 		if chosen.Address != "" {
@@ -298,8 +301,9 @@ func (a *application) start() {
 			if playback.AudioOnly {
 				return
 			}
-			if err := runMirrorShortcuts(sessionCtx, cmd.Process.Pid); err != nil {
-				log.Printf("投屏 Esc 快捷键不可用（仍可按 F11）: %v", err)
+			if err := runMirrorWindow(sessionCtx, cmd.Process.Pid, playback, a.b, serial, cancel); err != nil {
+				a.logs.printf("ERROR 投屏缩放窗口: %v", err)
+				cancel()
 			}
 		}()
 		a.workers.Add(1)
@@ -326,7 +330,7 @@ func (a *application) start() {
 			if playback.BufferMS > 0 {
 				buffer = fmt.Sprintf("音视频缓存 %s 秒", bufferSeconds(playback.BufferMS))
 			}
-			a.status, a.detail = "投屏运行中 · "+p.Name, buffer+"；投屏窗口按 F11 切换全屏 / 窗口，Esc 退出全屏，Alt+Q 关闭投屏。"
+			a.status, a.detail = "投屏运行中 · "+p.Name, buffer+"；投屏窗口 Alt+Z 调节画面缩放，F11 切换全屏，Esc 退出全屏，Alt+Q 关闭。"
 			if playback.AudioOnly {
 				buffer = "额外音频缓存已关闭"
 				if playback.BufferMS > 0 {

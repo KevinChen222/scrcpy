@@ -4,4 +4,6 @@ package main
 
 import "context"
 
-func runMirrorShortcuts(ctx context.Context, pid int) error { return nil }
+func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, b *backend, serial string, cancel context.CancelFunc) error {
+	return nil
+}

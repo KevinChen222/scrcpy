@@ -47,7 +47,8 @@ func (c customPreset) preset() (preset, error) {
 type playbackOptions struct {
 	BufferMS         int
 	Fullscreen       bool
-	Stretch          bool
+	ScaleMode        string
+	Frames           *mirrorFrames
 	TurnScreenOff    bool
 	KeyboardUHID     bool
 	AudioOnly        bool
@@ -123,10 +124,12 @@ func (p preset) args(serial string, playback playbackOptions) []string {
 		if playback.BufferMS > 0 {
 			args = append(args, fmt.Sprintf("--video-buffer=%d", playback.BufferMS))
 		}
-		if playback.Fullscreen {
+		if playback.Fullscreen && playback.Frames == nil {
 			args = append(args, "--fullscreen")
 		}
-		if playback.Stretch {
+		if playback.Frames != nil {
+			args = append(args, "--render-fit=stretched", "--no-window-aspect-ratio-lock")
+		} else if playback.ScaleMode == string(scaleStretch) {
 			args = append(args, "--render-fit=stretched")
 		}
 	}

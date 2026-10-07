@@ -90,6 +90,23 @@ func TestNativeViewAtMinimumSize(t *testing.T) {
 	if a.playback.BufferMS != 1000 {
 		t.Fatal("buffer settings were not reachable by scrolling at minimum size")
 	}
+	tt.Scroll(700, 300, 0, 500)
+	if err := tt.Click("画面缩放模式"); err != nil {
+		t.Fatal(err)
+	}
+	if err := tt.Click(string(scaleAuto)); err != nil || a.playback.ScaleMode != string(scaleAuto) {
+		t.Fatal("scale selection was not reachable at minimum size")
+	}
+	if path := os.Getenv("SCRCPY_GUI_MIN_SCREENSHOT"); path != "" {
+		file, err := os.Create(path + "-scale.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if err := png.Encode(file, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 func TestNativeViewCompactLayout(t *testing.T) {
@@ -109,14 +126,17 @@ func TestNativeViewCompactLayout(t *testing.T) {
 				t.Fatalf("device sidebar leaves too little room for settings: %+v", preset)
 			}
 			action, _ := tt.Find("开始投屏")
-			for _, label := range []string{"流畅 · 30 fps", "原画 · 60 fps", "自定义", "1 秒缓存", "启动后熄灭设备屏幕（关闭屏幕电源）", "电脑键盘输入（UHID，支持手机输入法）", "投屏启动时全屏（覆盖任务栏）", "铺满屏幕（拉伸画面）"} {
+			for _, label := range []string{"流畅 · 30 fps", "原画 · 60 fps", "自定义", "1 秒缓存", "启动后熄灭设备屏幕（关闭屏幕电源）", "电脑键盘输入（UHID，支持手机输入法）", "投屏启动时全屏（覆盖任务栏）", "画面缩放模式"} {
 				r, ok := tt.Find(label)
 				if !ok || r.X < 0 || r.Y < 0 || r.X+r.W > float32(size[0]) || r.Y+r.H >= action.Y {
 					t.Errorf("setting %q is not fully visible above the action bar: %+v", label, r)
 				}
 			}
-			if err := tt.Click("铺满屏幕（拉伸画面）"); err != nil || !a.playback.Stretch {
+			if err := tt.Click("画面缩放模式"); err != nil {
 				t.Fatal("window setting is not clickable without scrolling")
+			}
+			if err := tt.Click(string(scaleAuto)); err != nil || a.playback.ScaleMode != string(scaleAuto) {
+				t.Fatal("adaptive scale selection failed")
 			}
 			if path := os.Getenv("SCRCPY_GUI_LAYOUT_SCREENSHOT"); path != "" {
 				file, err := os.Create(fmt.Sprintf("%s-%dx%d.png", path, size[0], size[1]))
@@ -196,12 +216,15 @@ func TestWiredModeAndPlaybackSettings(t *testing.T) {
 		t.Fatal("wired mode did not select only USB transports and its high specification")
 	}
 	tt.Scroll(900, 500, 0, 500)
-	for _, label := range []string{"关闭缓存", "1 秒缓存", "投屏启动时全屏（覆盖任务栏）", "铺满屏幕（拉伸画面）"} {
+	for _, label := range []string{"关闭缓存", "1 秒缓存", "投屏启动时全屏（覆盖任务栏）", "画面缩放模式"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if a.playback.BufferMS != 1000 || !a.playback.Fullscreen || !a.playback.Stretch {
+	if err := tt.Click(string(scaleStretch)); err != nil {
+		t.Fatal(err)
+	}
+	if a.playback.BufferMS != 1000 || !a.playback.Fullscreen || a.playback.ScaleMode != string(scaleStretch) {
 		t.Fatal("playback settings did not change")
 	}
 	a.session = &exec.Cmd{}

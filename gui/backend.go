@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -409,6 +410,10 @@ func (b *backend) start(ctx context.Context, serial string, p preset, playback p
 	}
 	output.printf("scrcpy %s", strings.Join(cmd.Args[1:], " "))
 	cmd.Stdout, cmd.Stderr = output, output
+	if playback.Frames != nil {
+		cmd.Stdout = io.MultiWriter(output, playback.Frames)
+		cmd.Stderr = cmd.Stdout
+	}
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("启动投屏失败: %w", err)

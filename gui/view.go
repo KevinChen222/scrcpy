@@ -275,8 +275,8 @@ drain:
 								ui.Checkbox(c, &a.playback.KeyboardUHID, "电脑键盘输入（UHID，支持手机输入法）").Disabled(settingsDisabled)
 								ui.Text(c, "点击投屏中的输入框后打字；中文由手机输入法处理。首次按 Alt+K 配置实体键盘。不兼容时取消勾选，恢复基础键盘输入。").FontSize(12).TextColor(t.TextMuted)
 								ui.Checkbox(c, &a.playback.Fullscreen, "投屏启动时全屏（覆盖任务栏）").Disabled(settingsDisabled)
-								ui.Checkbox(c, &a.playback.Stretch, "铺满屏幕（拉伸画面）").Disabled(settingsDisabled)
-								ui.Text(c, "默认以普通窗口启动；投屏窗口按 F11 切换全屏 / 窗口，Esc 退出全屏。铺满会改变画面比例。").FontSize(12).TextColor(t.TextMuted)
+								ui.Select(c, &a.playback.ScaleMode, scaleModes).Label("画面缩放模式").Disabled(settingsDisabled).FillWidth()
+								ui.Text(c, "投屏中 Alt+Z 随时切换缩放；自适应识别黑边并保持比例。F11 全屏，Esc 退出。").FontSize(12).TextColor(t.TextMuted)
 							}
 						})
 					})

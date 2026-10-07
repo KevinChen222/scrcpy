@@ -31,10 +31,16 @@ func (d device) key() string {
 	return d.Serial
 }
 
+func (d device) usb() bool {
+	return d.Serial != "" && d.Address == "" && !d.Pairing &&
+		!strings.Contains(d.Serial, "_adb-tls-connect._tcp") && !strings.HasPrefix(d.Serial, "emulator-")
+}
+
 type backend struct {
 	adb    string
 	scrcpy string
 	run    func(context.Context, ...string) (string, error)
+	logs   *sessionLog
 }
 
 func newBackend() (*backend, error) {
@@ -67,19 +73,42 @@ func newBackend() (*backend, error) {
 }
 
 func (b *backend) runADB(ctx context.Context, args ...string) (string, error) {
+	loggedArgs := append([]string(nil), args...)
+	if len(loggedArgs) == 3 && loggedArgs[0] == "pair" {
+		loggedArgs[2] = "[配对码已隐藏]"
+	}
+	b.logs.printf("ADB %s", strings.Join(loggedArgs, " "))
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, b.adb, args...)
 	hideConsole(cmd)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
+	loggedOutput := string(out)
+	if len(args) == 3 && args[0] == "pair" {
+		loggedOutput = strings.ReplaceAll(loggedOutput, args[2], "[配对码已隐藏]")
+	}
+	if loggedOutput != "" {
+		if err == nil && len(args) == 5 && args[3] == "dumpsys" && args[4] == "SurfaceFlinger" {
+			for _, line := range strings.Split(loggedOutput, "\n") {
+				if strings.Contains(line, "powerMode=") {
+					b.logs.printf("INFO 设备物理显示状态: %s", strings.TrimSpace(line))
+				}
+			}
+		} else {
+			b.logs.printf("ADB: %s", strings.TrimSpace(loggedOutput))
+		}
+	}
+	if err != nil {
+		b.logs.printf("ERROR ADB: %v", err)
+	}
 	if ctx.Err() != nil {
 		return string(out), fmt.Errorf("ADB 操作超时或已取消: %w", ctx.Err())
 	}
 	if err != nil {
-		return string(out), fmt.Errorf("ADB: %s (%w)", strings.TrimSpace(string(out)), err)
+		return loggedOutput, fmt.Errorf("ADB: %s (%w)", strings.TrimSpace(loggedOutput), err)
 	}
-	return string(out), nil
+	return loggedOutput, nil
 }
 
 // Android's wireless-debugging and pairing ports differ. Never connect to
@@ -121,6 +150,8 @@ func parseDevices(out string) []device {
 			d.Address, d.Source = address, "局域网"
 		} else if strings.Contains(fields[0], "_adb-tls-connect._tcp") {
 			d.Source = "无线调试"
+		} else if d.usb() {
+			d.Source = "USB 有线"
 		}
 		for _, field := range fields[2:] {
 			if model, ok := strings.CutPrefix(field, "model:"); ok {
@@ -282,6 +313,23 @@ func (b *backend) discover(ctx context.Context, network string) ([]device, strin
 	return mergeDevices(legacy, mdns, parseDevices(out)), note, nil
 }
 
+func (b *backend) discoverUSB(ctx context.Context) ([]device, error) {
+	if _, err := b.run(ctx, "start-server"); err != nil {
+		return nil, err
+	}
+	out, err := b.run(ctx, "devices", "-l")
+	if err != nil {
+		return nil, err
+	}
+	var devices []device
+	for _, d := range parseDevices(out) {
+		if d.usb() {
+			devices = append(devices, d)
+		}
+	}
+	return devices, nil
+}
+
 func (b *backend) connect(ctx context.Context, value string) (string, error) {
 	address, err := normalizeAddress(value, true)
 	if err != nil {
@@ -320,38 +368,50 @@ func (b *backend) pair(ctx context.Context, value, code string) error {
 	return nil
 }
 
-// Keep the last diagnostics without growing memory during a long session.
-type sessionLog struct {
-	mu   sync.Mutex
-	data []byte
-}
-
-func (l *sessionLog) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.data = append(l.data, p...)
-	if len(l.data) > 8192 {
-		l.data = l.data[len(l.data)-8192:]
+// Use a fresh context: the mirror's context is cancelled on stop and GUI exit.
+func (b *backend) restoreScreen(serial string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := b.run(ctx, "-s", serial, "shell", "input", "keyevent", "KEYCODE_WAKEUP")
+	if err == nil {
+		// Allow scrcpy's device cleanup to finish before checking physical power.
+		select {
+		case <-time.After(350 * time.Millisecond):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		var out string
+		out, err = b.run(ctx, "-s", serial, "shell", "dumpsys", "SurfaceFlinger")
+		if err == nil && (strings.Contains(out, "powerMode=OFF") || strings.Contains(out, "powerMode=0")) {
+			// WAKEUP does nothing when Android considers an unlit display awake.
+			// Reapply the power state only for a display that is still physically off.
+			_, err = b.run(ctx, "-s", serial, "shell", "input", "keyevent", "KEYCODE_SLEEP", "KEYCODE_WAKEUP")
+		}
 	}
-	return len(p), nil
+	if err != nil {
+		return fmt.Errorf("恢复设备亮屏失败: %w", err)
+	}
+	return nil
 }
 
-func (l *sessionLog) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return strings.TrimSpace(string(l.data))
-}
-
-func (b *backend) start(ctx context.Context, serial string, p preset) (*exec.Cmd, *sessionLog, error) {
-	cmd := exec.CommandContext(ctx, b.scrcpy, p.args(serial)...)
+func (b *backend) start(ctx context.Context, serial string, p preset, playback playbackOptions) (*exec.Cmd, *sessionLog, error) {
+	args := p.args(serial, playback)
+	if b.logs.isEnabled() {
+		args = append(args, "--verbosity=debug")
+	}
+	cmd := exec.CommandContext(ctx, b.scrcpy, args...)
 	cmd.Dir = filepath.Dir(b.scrcpy)
 	cmd.Env = append(os.Environ(), "ADB="+b.adb, "SCRCPY_SERVER_PATH="+filepath.Join(cmd.Dir, "scrcpy-server"))
 	hideConsole(cmd)
-	log := &sessionLog{}
-	cmd.Stdout, cmd.Stderr = log, log
+	output := b.logs
+	if output == nil {
+		output = &sessionLog{}
+	}
+	output.printf("scrcpy %s", strings.Join(cmd.Args[1:], " "))
+	cmd.Stdout, cmd.Stderr = output, output
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("启动投屏失败: %w", err)
 	}
-	return cmd, log, nil
+	return cmd, output, nil
 }

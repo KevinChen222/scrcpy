@@ -6,5 +6,6 @@ import (
 )
 
 func hideConsole(cmd *exec.Cmd) {
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	// Suppress the console without imposing SW_HIDE on scrcpy's SDL window.
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000} // CREATE_NO_WINDOW
 }

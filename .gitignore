@@ -8,3 +8,7 @@ build/
 /x/
 local.properties
 /scrcpy-server
+
+# Local GUI build tools and portable artifacts
+/.tools/
+/gui/build/

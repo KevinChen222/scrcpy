@@ -1,3 +1,13 @@
+# scrcpy LAN — mygo GUI fork
+
+本社区 fork 新增 Windows 原生 GUI：局域网 Android 设备发现、无线调试配对和四个画质 / 帧率档位。完整解压便携包后运行 `scrcpy-lan.exe`。
+
+**[下载 GUI Release](https://github.com/KevinChen222/scrcpy/releases) · [使用说明与构建方法](gui/README.md)**
+
+手机需先开启无线调试或 ADB TCP/IP。界面采用 [mygo](https://github.com/egoist/mygo) 原生 Go UI，投屏沿用 scrcpy 独立窗口。以下保留上游项目说明。
+
+---
+
 > [!WARNING]
 > **This GitHub repo (<https://github.com/Genymobile/scrcpy>) is the only official
 source for the project. Do not download releases from random websites, even if

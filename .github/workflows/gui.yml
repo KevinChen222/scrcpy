@@ -1,0 +1,31 @@
+name: GUI Windows
+
+on:
+  push:
+    branches: [master, gui-v1]
+    paths: ['gui/**', '.github/workflows/gui.yml']
+  pull_request:
+    paths: ['gui/**', '.github/workflows/gui.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+      - name: Test and build portable package
+        shell: pwsh
+        run: ./gui/build.ps1 -GuiVersion v0.1.0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scrcpy-lan-windows-x64
+          path: |
+            gui/build/scrcpy-lan-v0.1.0-windows-x64.zip
+            gui/build/scrcpy-lan-v0.1.0-windows-x64.sha256

@@ -43,8 +43,9 @@ adb-phone._adb-tls-connect._tcp device product:panther model:Pixel_7 device:pant
 192.168.1.20:5555 unauthorized transport_id:2
 usb-123 offline model:Pixel_8
 `)
-	devices := mergeDevices(mdns, connected)
-	if len(devices) != 4 {
+	legacy := []device{{Address: "192.168.1.20:5555"}, {Address: "192.168.1.30:5555"}}
+	devices := mergeDevices(legacy, mdns, connected)
+	if len(devices) != 5 {
 		t.Fatalf("expected one entry per transport (including pairing), got %+v", devices)
 	}
 	for _, d := range devices {
@@ -54,6 +55,9 @@ usb-123 offline model:Pixel_8
 		if d.Pairing && d.Address != "192.168.1.10:40123" {
 			t.Fatalf("pairing transport confused with connect transport: %+v", d)
 		}
+	}
+	if devices[2].Address != "192.168.1.20:5555" || devices[3].Address != "192.168.1.30:5555" {
+		t.Fatalf("distinct legacy candidates were merged: %+v", devices)
 	}
 }
 

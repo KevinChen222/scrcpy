@@ -138,7 +138,7 @@ func mergeDevices(groups ...[]device) []device {
 		for _, d := range group {
 			found := -1
 			for i, old := range result {
-				if old.key() == d.key() || old.Serial == d.Serial || strings.TrimSuffix(old.Serial, ".") == strings.TrimSuffix(d.Serial, ".") {
+				if old.key() == d.key() || (old.Serial != "" && d.Serial != "" && strings.TrimSuffix(old.Serial, ".") == strings.TrimSuffix(d.Serial, ".")) {
 					found = i
 					break
 				}

@@ -7,7 +7,7 @@
 - Windows 10 / 11 x64 中文原生 Go GUI，负责 Android 设备发现、配对、连接和参数选择；投屏由官方 scrcpy 处理。
 - fork：`KevinChen222/scrcpy`，`origin` 指向它，发布目标 `master`；上游 `Genymobile/scrcpy` 使用 `upstream`，不要推送到上游。
 - 本机目录 `D:\codex\scrpy`。现有工作区先检查并保留未提交修改，不重复 clone / fork。
-- 当前交付版本：GUI `v0.6.0` / tag `gui-v0.6.0`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.0)。官方运行包 `v5.0`，依赖以 `gui/go.mod` 为准。
+- 当前交付版本：GUI `v0.6.1` / tag `gui-v0.6.1`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.1)。官方运行包 `v5.0`，依赖以 `gui/go.mod` 为准。
 
 ## 约束与入口
 

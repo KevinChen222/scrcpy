@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^v\d+\.\d+\.\d+([-.][a-zA-Z0-9.]+)?$')]
-    [string]$GuiVersion = 'v0.6.0'
+    [string]$GuiVersion = 'v0.6.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,6 +21,7 @@ function Invoke-Go {
 
 Push-Location -LiteralPath $root
 try {
+    Invoke-Go -NativeArgs @('run', 'github.com/akavel/rsrc@v0.10.2', '-arch', 'amd64', '-ico', 'assets/icon.ico', '-o', 'icon_windows_amd64.syso')
     Invoke-Go -NativeArgs @('test', '-buildvcs=false', './...')
     Invoke-Go -NativeArgs @('vet', '-buildvcs=false', './...')
     if (Test-Path -LiteralPath $package) {

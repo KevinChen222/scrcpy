@@ -4,9 +4,11 @@
 
 ## 下载和启动
 
-从 [v0.6.0 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.0) 下载 `scrcpy-lan-v0.6.0-windows-x64.zip`。**完整解压**便携包，双击 `scrcpy-lan.exe`。`runtime` 目录附带官方 scrcpy v5.0、adb 和运行依赖，勿单独移动 exe。发布包未进行代码签名。
+从 [v0.6.1 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.1) 下载 `scrcpy-lan-v0.6.1-windows-x64.zip`。**完整解压**便携包，双击 `scrcpy-lan.exe`。`runtime` 目录附带官方 scrcpy v5.0、adb 和运行依赖，勿单独移动 exe。发布包未进行代码签名。
 
 GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会停止它启动的投屏，不会关闭全局 ADB 服务。
+
+GUI 使用绿色叠放手机图标，EXE 文件、主窗口、日志窗口及投屏外层窗口共用该图标。图标嵌入 EXE，便携使用无需单独的图标文件。
 
 可选择「画面和声音」（默认）或「仅音频」。仅音频不打开投屏窗口，在 GUI 中点击「停止音频」结束；关闭 GUI 也会停止音频会话。
 
@@ -150,10 +152,10 @@ GUI 位于独立的 `gui/` Go 模块，使用官方 scrcpy 命令行参数与 AD
 cd gui
 go test ./...
 go vet ./...
-.\build.ps1 -GuiVersion v0.6.0
+.\build.ps1 -GuiVersion v0.6.1
 ```
 
-输出为 `gui/build/scrcpy-lan-v0.6.0-windows-x64.zip` 和对应 `.sha256`。构建脚本会验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
+输出为 `gui/build/scrcpy-lan-v0.6.1-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
 
 测试覆盖 mDNS / ADB 解析、服务去重、地址及配对码校验、拒绝未授权连接、子进程参数和取消，以及原生界面的设备 / 档位选择。真实手机投屏仍需在自己的局域网和手机上验证。
 

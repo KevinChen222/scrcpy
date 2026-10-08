@@ -232,6 +232,8 @@ func (v *mirrorView) attach(child uintptr, fullscreen bool) error {
 		SmallIcon                          uintptr
 	}{Proc: mirrorViewCallback, Instance: module, Name: className}
 	class.Size = uint32(unsafe.Sizeof(class))
+	class.Icon, _, _ = mirrorUser32.NewProc("LoadIconW").Call(module, 1)
+	class.SmallIcon = class.Icon
 	class.Cursor, _, _ = mirrorUser32.NewProc("LoadCursorW").Call(0, 32512)
 	class.Background, _, _ = syscall.NewLazyDLL("gdi32.dll").NewProc("GetStockObject").Call(4) // BLACK_BRUSH
 	registered, _, err := mirrorUser32.NewProc("RegisterClassExW").Call(uintptr(unsafe.Pointer(&class)))

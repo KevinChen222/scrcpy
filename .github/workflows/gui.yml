@@ -22,10 +22,10 @@ jobs:
           cache-dependency-path: gui/go.sum
       - name: Test and build portable package
         shell: pwsh
-        run: ./gui/build.ps1 -GuiVersion v0.6.1
+        run: ./gui/build.ps1 -GuiVersion v0.6.2
       - uses: actions/upload-artifact@v7
         with:
           name: scrcpy-lan-windows-x64
           path: |
-            gui/build/scrcpy-lan-v0.6.1-windows-x64.zip
-            gui/build/scrcpy-lan-v0.6.1-windows-x64.sha256
+            gui/build/scrcpy-lan-v0.6.2-windows-x64.zip
+            gui/build/scrcpy-lan-v0.6.2-windows-x64.sha256

@@ -318,6 +318,9 @@ func TestUSBDiscoveryExcludesNetworkAndEmulator(t *testing.T) {
 	var calls [][]string
 	b := &backend{run: func(_ context.Context, args ...string) (string, error) {
 		calls = append(calls, args)
+		if args[0] == "-s" {
+			return "", fmt.Errorf("metadata unavailable")
+		}
 		return `List of devices attached
 usb-phone device model:Pixel_9
 usb-locked unauthorized
@@ -327,10 +330,12 @@ emulator-5554 device model:Emulator
 `, nil
 	}}
 	devices, err := b.discoverUSB(context.Background())
-	if err != nil || len(devices) != 2 || devices[0].Serial != "usb-phone" || devices[1].State != "unauthorized" {
+	if err != nil || len(devices) != 2 || devices[1].Serial != "usb-phone" || devices[0].State != "unauthorized" {
 		t.Fatalf("incorrect USB discovery: %+v, %v", devices, err)
 	}
-	if !reflect.DeepEqual(calls, [][]string{{"start-server"}, {"devices", "-l"}}) {
+	if !reflect.DeepEqual(calls, [][]string{{"start-server"}, {"devices", "-l"},
+		{"-s", "usb-phone", "shell", "getprop", "ro.serialno"},
+		{"-s", "usb-phone", "shell", "settings", "get", "global", "device_name"}}) {
 		t.Fatalf("USB discovery attempted network scanning: %v", calls)
 	}
 }

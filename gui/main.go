@@ -22,6 +22,7 @@ type windowControls interface {
 
 type deviceSession struct {
 	key, serial, name string
+	device            device
 	label             string
 	playback          playbackOptions
 	cmd               *exec.Cmd
@@ -112,15 +113,44 @@ func (a *application) work(message string, job func(context.Context) (func(), er
 }
 
 func (a *application) setDevices(devices []device) {
+	var selected device
+	for _, old := range a.devices {
+		if old.key() == a.selected || old.hasConnection(a.selected) {
+			selected = old
+		}
+	}
+	devices = mergeDevices(devices)
+	for i, d := range devices {
+		for _, old := range a.devices {
+			if sameDevice(old, d) {
+				// Keep aliases across refreshes without treating disappeared
+				// connections as ready. Current discovery owns their state.
+				d = combineDevice(old.stale(), d)
+			}
+		}
+		active := ""
+		for _, session := range a.sessions {
+			if session.matches(d) {
+				// Preserve the session's confirmed identity and original ADB
+				// serial when a refresh only reports an unverified alias.
+				d = combineDevice(session.device.stale(), d)
+				session.device = d
+				session.key, session.name = d.key(), d.displayName()
+				active = session.serial
+			}
+		}
+		devices[i] = d.withConnection(preferredConnection(d.connections(), active))
+	}
 	a.devices = devices
-	for _, d := range devices {
-		if d.key() == a.selected && d.usb() == a.wired {
+	for _, d := range a.visibleDevices() {
+		if d.key() == a.selected || d.hasConnection(a.selected) || sameDevice(selected, d) {
+			a.selected = d.key()
 			return
 		}
 	}
 	a.selected = ""
-	for _, d := range devices {
-		if !d.Pairing && d.usb() == a.wired {
+	for _, d := range a.visibleDevices() {
+		if !d.Pairing {
 			a.selected = d.key()
 			break
 		}
@@ -140,8 +170,15 @@ func (a *application) setMode(wired bool) {
 func (a *application) visibleDevices() []device {
 	var devices []device
 	for _, d := range a.devices {
-		if d.usb() == a.wired {
-			devices = append(devices, d)
+		active := ""
+		for _, session := range a.sessions {
+			if session.matches(d) {
+				active = session.serial
+				break
+			}
+		}
+		if visible, ok := d.forMode(a.wired, active); ok {
+			devices = append(devices, visible)
 		}
 	}
 	return devices
@@ -189,10 +226,20 @@ func (a *application) connect() {
 			return nil, err
 		}
 		out, err := a.b.run(ctx, "devices", "-l")
+		if err != nil {
+			return nil, err
+		}
+		devices := a.b.resolveDevices(ctx, parseDevices(out))
 		return func() {
-			a.setDevices(mergeDevices(a.devices, parseDevices(out)))
-			a.selected, a.status, a.detail = serial, "设备已连接", "选择档位后点击开始投屏。"
-		}, err
+			a.setDevices(mergeDevices(a.devices, devices))
+			for _, d := range a.devices {
+				if d.hasConnection(serial) {
+					a.selected = d.key()
+					break
+				}
+			}
+			a.status, a.detail = "设备已连接", "选择档位后点击开始投屏。"
+		}, ctx.Err()
 	})
 }
 
@@ -217,7 +264,7 @@ func (a *application) start() {
 		return
 	}
 	var chosen device
-	for _, d := range a.devices {
+	for _, d := range a.visibleDevices() {
 		if d.key() == a.selected {
 			chosen = d
 			break
@@ -275,9 +322,11 @@ func (a *application) start() {
 	if !playback.AudioOnly {
 		playback.Frames = &mirrorFrames{}
 	}
-	activeSerials := make(map[string]bool, len(a.sessions))
+	activeDevices := make([]device, 0, len(a.sessions))
 	for _, session := range a.sessions {
-		activeSerials[session.serial] = true
+		d := session.device
+		d.Serial, d.State = session.serial, "device"
+		activeDevices = append(activeDevices, d)
 	}
 	a.work(message, func(ctx context.Context) (func(), error) {
 		serial := chosen.Serial
@@ -296,8 +345,24 @@ func (a *application) start() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if activeSerials[serial] {
-			return nil, fmt.Errorf("设备 %s 已有运行中的会话，请先停止该设备", serial)
+		ready := a.b.identifyDevices(ctx, []device{{Serial: serial, Address: chosen.Address,
+			Name: chosen.Name, DeviceName: chosen.DeviceName, State: "device", Source: chosen.Source}})[0]
+		ready = combineDevice(chosen, ready)
+		for i, active := range activeDevices {
+			if active.Identity == "" {
+				active = a.b.identifyDevices(ctx, []device{active})[0]
+				activeDevices[i] = active
+			}
+			if sameDevice(active, ready) {
+				return func() {
+					a.setDevices(mergeDevices(a.devices, activeDevices, []device{ready}))
+					a.status = "设备已有运行中的会话"
+					a.errorText = "请先停止该设备，再更改投屏或音频设置。"
+				}, nil
+			}
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 		sessionCtx, cancel := context.WithCancel(a.ctx)
 		cmd, _, err := a.b.start(sessionCtx, serial, p, playback)
@@ -348,9 +413,10 @@ func (a *application) start() {
 			done <- result{err, restoreErr, muteErr}
 		}()
 		return func() {
-			session := &deviceSession{key: chosen.key(), serial: serial, name: chosen.Name,
+			session := &deviceSession{key: ready.key(), serial: serial, name: ready.displayName(), device: ready,
 				label: p.Name, playback: playback, cmd: cmd, cancel: cancel}
 			a.sessions = append(a.sessions, session)
+			a.setDevices(mergeDevices(a.devices, []device{ready}))
 			buffer := "额外音视频缓存已关闭"
 			if playback.BufferMS > 0 {
 				buffer = fmt.Sprintf("音视频缓存 %s 秒", bufferSeconds(playback.BufferMS))
@@ -384,8 +450,20 @@ func (a *application) selectedSession() *deviceSession {
 		if a.selected == session.key || a.selected == session.serial {
 			return session
 		}
+		for _, d := range a.devices {
+			if d.key() == a.selected && session.matches(d) {
+				return session
+			}
+		}
 	}
 	return nil
+}
+
+func (s *deviceSession) matches(d device) bool {
+	if s.device.Identity != "" && d.Identity != "" {
+		return s.device.Identity == d.Identity
+	}
+	return s.key != "" && s.key == d.key() || d.hasConnection(s.serial) || sameDevice(s.device, d)
 }
 
 func (a *application) stop(session *deviceSession) {
@@ -402,6 +480,7 @@ func (a *application) finishSession(session *deviceSession, err, restoreErr, mut
 			break
 		}
 	}
+	a.setDevices(a.devices)
 	a.status, a.detail = session.serial+" 会话已结束", ""
 	if len(a.sessions) > 0 {
 		a.detail = fmt.Sprintf("其他 %d 台设备继续运行。", len(a.sessions))

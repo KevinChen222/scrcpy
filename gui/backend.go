@@ -17,19 +17,133 @@ import (
 )
 
 type device struct {
-	Serial  string
-	Address string
-	Name    string
-	State   string
-	Source  string
-	Pairing bool
+	Serial      string
+	Address     string
+	Name        string
+	DeviceName  string
+	Identity    string
+	State       string
+	Source      string
+	Pairing     bool
+	Connections []deviceConnection
 }
 
 func (d device) key() string {
+	if d.Identity != "" && !d.Pairing {
+		return "phone:" + d.Identity
+	}
 	if d.Address != "" {
 		return d.Address
 	}
 	return d.Serial
+}
+
+func (d device) displayName() string {
+	if d.DeviceName != "" {
+		return d.DeviceName
+	}
+	return d.Name
+}
+
+func (d device) connectionLabel() string {
+	if d.Address != "" {
+		return d.Address
+	}
+	return d.Serial
+}
+
+type deviceConnection struct {
+	Serial, Address, State, Source string
+}
+
+func (d device) connections() []deviceConnection {
+	if len(d.Connections) > 0 {
+		return d.Connections
+	}
+	return []deviceConnection{{d.Serial, d.Address, d.State, d.Source}}
+}
+
+func (d device) hasConnection(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, c := range d.connections() {
+		if sameAlias(value, c.Serial) || sameAlias(value, c.Address) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameAlias(a, b string) bool {
+	return a != "" && b != "" && strings.TrimSuffix(a, ".") == strings.TrimSuffix(b, ".")
+}
+
+func sameDevice(a, b device) bool {
+	if a.Pairing != b.Pairing {
+		return false
+	}
+	if a.Identity != "" && b.Identity != "" {
+		return a.Identity == b.Identity
+	}
+	for _, c := range a.connections() {
+		if b.hasConnection(c.Serial) || b.hasConnection(c.Address) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d device) withConnection(c deviceConnection) device {
+	d.Serial, d.Address, d.State, d.Source = c.Serial, c.Address, c.State, c.Source
+	return d
+}
+
+func (d device) stale() device {
+	d.Connections = append([]deviceConnection(nil), d.connections()...)
+	d.State = "offline"
+	for i := range d.Connections {
+		d.Connections[i].State = "offline"
+	}
+	return d
+}
+
+func preferredConnection(connections []deviceConnection, active string) deviceConnection {
+	rank := func(c deviceConnection) int {
+		if sameAlias(c.Serial, active) {
+			return 4
+		}
+		if c.State == "device" {
+			if c.Source == "无线调试" {
+				return 3
+			}
+			return 2
+		}
+		if c.State == "可连接" || c.State == "待验证" || c.State == "待配对" {
+			return 1
+		}
+		return 0
+	}
+	best := connections[0]
+	for _, c := range connections[1:] {
+		if rank(c) > rank(best) || rank(c) == rank(best) && c.Serial+c.Address < best.Serial+best.Address {
+			best = c
+		}
+	}
+	return best
+}
+
+func (d device) forMode(wired bool, active string) (device, bool) {
+	var connections []deviceConnection
+	for _, c := range d.connections() {
+		if d.withConnection(c).usb() == wired {
+			connections = append(connections, c)
+		}
+	}
+	if len(connections) == 0 {
+		return device{}, false
+	}
+	return d.withConnection(preferredConnection(connections, active)), true
 }
 
 func (d device) usb() bool {
@@ -38,10 +152,17 @@ func (d device) usb() bool {
 }
 
 type backend struct {
-	adb    string
-	scrcpy string
-	run    func(context.Context, ...string) (string, error)
-	logs   *sessionLog
+	adb        string
+	scrcpy     string
+	run        func(context.Context, ...string) (string, error)
+	logs       *sessionLog
+	metadataMu sync.Mutex
+	metadata   map[string]phoneInfo
+	phoneNames map[string]string
+}
+
+type phoneInfo struct {
+	Identity, Name string
 }
 
 func newBackend() (*backend, error) {
@@ -168,26 +289,182 @@ func mergeDevices(groups ...[]device) []device {
 	var result []device
 	for _, group := range groups {
 		for _, d := range group {
-			found := -1
-			for i, old := range result {
-				if old.key() == d.key() || (old.Serial != "" && d.Serial != "" && strings.TrimSuffix(old.Serial, ".") == strings.TrimSuffix(d.Serial, ".")) {
-					found = i
-					break
+			// A new alias may bridge several earlier records. Preserve all of
+			// their transports, including service names replaced by IP serials.
+			for i := 0; i < len(result); {
+				if sameDevice(result[i], d) {
+					d = combineDevice(result[i], d)
+					result = append(result[:i], result[i+1:]...)
+					i = 0
+				} else {
+					i++
 				}
 			}
-			if found < 0 {
-				result = append(result, d)
-			} else {
-				old := result[found]
-				if d.Address == "" {
-					d.Address = old.Address
-				}
-				result[found] = d
-			}
+			result = append(result, d)
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].key() < result[j].key() })
 	return result
+}
+
+func combineDevice(old, fresh device) device {
+	if fresh.Identity == "" {
+		fresh.Identity = old.Identity
+	}
+	if fresh.DeviceName == "" {
+		fresh.DeviceName = old.DeviceName
+	}
+	if fresh.Name == "" || fresh.State != "device" && old.Name != "" {
+		fresh.Name = old.Name
+	}
+	var connections []deviceConnection
+	for _, c := range old.connections() {
+		if c.Serial != "" || c.Address != "" {
+			connections = append(connections, c)
+		}
+	}
+	for _, c := range fresh.connections() {
+		if c.Serial == "" && c.Address == "" {
+			continue
+		}
+		found := false
+		for i, previous := range connections {
+			if sameAlias(previous.Serial, c.Serial) || previous.Serial == "" && c.Serial == "" && sameAlias(previous.Address, c.Address) {
+				if previous.Address != "" && c.Address != "" && !sameAlias(previous.Address, c.Address) {
+					connections = append(connections, deviceConnection{Address: previous.Address, State: "offline", Source: previous.Source})
+				}
+				if c.Address == "" {
+					c.Address = previous.Address
+				}
+				connections[i], found = c, true
+				break
+			}
+		}
+		if !found {
+			connections = append(connections, c)
+		}
+	}
+	// An IP transport at an advertised TLS connect endpoint is wireless
+	// debugging too. Pairing services never enter this group.
+	for i, c := range connections {
+		for _, other := range connections {
+			if sameAlias(c.Address, other.Address) && other.Source == "无线调试" {
+				connections[i].Source = "无线调试"
+				break
+			}
+		}
+	}
+	fresh.Connections = connections
+	if len(connections) == 0 {
+		return fresh
+	}
+	return fresh.withConnection(preferredConnection(connections, ""))
+}
+
+func metadataValue(out string, err error) string {
+	value := strings.TrimSpace(out)
+	if err != nil || value == "" || strings.EqualFold(value, "null") || strings.ContainsAny(value, "\r\n") {
+		return ""
+	}
+	return value
+}
+
+// Called only by background jobs, and only for an authorized ADB transport.
+// Query failures affect labels/identity, never the ability to connect.
+func (b *backend) readPhoneInfo(ctx context.Context, serial string) phoneInfo {
+	b.metadataMu.Lock()
+	info := b.metadata[strings.TrimSuffix(serial, ".")]
+	b.metadataMu.Unlock()
+	if info.Identity != "" {
+		return info
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	out, err := b.run(queryCtx, "-s", serial, "shell", "getprop", "ro.serialno")
+	info.Identity = metadataValue(out, err)
+	if strings.ContainsAny(info.Identity, " \t") || info.Identity == "0" || strings.EqualFold(info.Identity, "unknown") {
+		info.Identity = ""
+	}
+	b.metadataMu.Lock()
+	name, knownName := b.phoneNames[info.Identity]
+	b.metadataMu.Unlock()
+	if info.Identity != "" && knownName {
+		info.Name = name
+	} else if info.Name == "" {
+		out, err = b.run(queryCtx, "-s", serial, "shell", "settings", "get", "global", "device_name")
+		info.Name = metadataValue(out, err)
+	}
+	if queryCtx.Err() == nil {
+		b.metadataMu.Lock()
+		if b.metadata == nil {
+			b.metadata = make(map[string]phoneInfo)
+			b.phoneNames = make(map[string]string)
+		}
+		b.metadata[strings.TrimSuffix(serial, ".")] = info
+		if info.Identity != "" {
+			b.phoneNames[info.Identity] = info.Name
+		}
+		b.metadataMu.Unlock()
+	}
+	return info
+}
+
+func (b *backend) identifyDevices(ctx context.Context, devices []device) []device {
+	result := append([]device(nil), devices...)
+	for i, d := range result {
+		if d.Pairing {
+			continue
+		}
+		var info phoneInfo
+		if d.State == "device" && d.Serial != "" {
+			info = b.readPhoneInfo(ctx, d.Serial)
+		} else {
+			b.metadataMu.Lock()
+			for _, c := range d.connections() {
+				info = b.metadata[strings.TrimSuffix(c.Serial, ".")]
+				if info.Identity == "" && info.Name == "" {
+					info = b.metadata[c.Address]
+				}
+				if info.Identity != "" || info.Name != "" {
+					break
+				}
+			}
+			b.metadataMu.Unlock()
+		}
+		if info.Identity != "" {
+			result[i].Identity = info.Identity
+		}
+		if info.Name != "" {
+			result[i].DeviceName = info.Name
+		}
+	}
+	return result
+}
+
+func (b *backend) resolveDevices(ctx context.Context, groups ...[]device) []device {
+	for i, group := range groups {
+		groups[i] = b.identifyDevices(ctx, group)
+	}
+	devices := mergeDevices(groups...)
+	b.metadataMu.Lock()
+	defer b.metadataMu.Unlock()
+	if b.metadata == nil {
+		b.metadata = make(map[string]phoneInfo)
+		b.phoneNames = make(map[string]string)
+	}
+	for _, d := range devices {
+		if d.Pairing || d.Identity == "" {
+			continue
+		}
+		for _, c := range d.connections() {
+			for _, alias := range []string{c.Serial, c.Address} {
+				if alias != "" {
+					b.metadata[strings.TrimSuffix(alias, ".")] = phoneInfo{d.Identity, d.DeviceName}
+				}
+			}
+		}
+	}
+	return devices
 }
 
 func normalizeAddress(value string, defaultPort bool) (string, error) {
@@ -311,7 +588,8 @@ func (b *backend) discover(ctx context.Context, network string) ([]device, strin
 	if mdnsErr != nil {
 		note = "mDNS 发现不可用；可用 IP:端口手动连接。"
 	}
-	return mergeDevices(legacy, mdns, parseDevices(out)), note, nil
+	devices := b.resolveDevices(ctx, legacy, mdns, parseDevices(out))
+	return devices, note, ctx.Err()
 }
 
 func (b *backend) discoverUSB(ctx context.Context) ([]device, error) {
@@ -328,7 +606,7 @@ func (b *backend) discoverUSB(ctx context.Context) ([]device, error) {
 			devices = append(devices, d)
 		}
 	}
-	return devices, nil
+	return b.resolveDevices(ctx, devices), ctx.Err()
 }
 
 func (b *backend) connect(ctx context.Context, value string) (string, error) {

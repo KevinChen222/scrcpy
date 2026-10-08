@@ -26,6 +26,12 @@ func TestMultiDeviceSessionsStopAndQuit(t *testing.T) {
 			muted <- args[1]
 			return "[V] volume is 0 in range [0..15]", nil
 		}
+		if len(args) > 4 && args[3] == "getprop" {
+			return args[1], nil
+		}
+		if len(args) > 4 && args[3] == "settings" {
+			return "null\n", nil
+		}
 		return "device\n", nil
 	}}
 	a := newApplication(ctx, b)

@@ -124,8 +124,8 @@ drain:
 								}
 								row.Children(func() {
 									ui.Column(c).Grow(1).Gap(3).Children(func() {
-										ui.Text(c, d.Name).Bold().SingleLine()
-										ui.Text(c, d.key()).FontSize(12).TextColor(t.TextMuted).SingleLine()
+										ui.Text(c, d.displayName()).Bold().SingleLine()
+										ui.Text(c, d.connectionLabel()).FontSize(12).TextColor(t.TextMuted).SingleLine()
 										state := d.State
 										switch state {
 										case "device":
@@ -134,6 +134,12 @@ drain:
 											state = "请在手机上授权"
 										case "offline":
 											state = "离线"
+										}
+										for _, session := range a.sessions {
+											if session.matches(d) {
+												state = "运行中"
+												break
+											}
 										}
 										ui.Text(c, d.Source+" · "+state).FontSize(12).TextColor(t.Accent)
 									})

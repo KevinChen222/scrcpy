@@ -3,12 +3,118 @@ package main
 import (
 	"context"
 	"fmt"
+	"image/png"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/egoist/mygo/ui"
 )
+
+func TestLiveDeviceListAndRefresh(t *testing.T) {
+	serial := os.Getenv("SCRCPY_GUI_DEVICE_LIST_TEST_SERIAL")
+	if serial == "" {
+		t.Skip("set SCRCPY_GUI_DEVICE_LIST_TEST_SERIAL for device identity/refresh checks")
+	}
+	b, err := newBackend()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a := newApplication(ctx, b)
+	a.logs.setEnabled(true)
+	a.playback.MuteOnStop = false
+	t.Cleanup(func() { cancel(); a.workers.Wait() })
+	devices, _, err := b.discover(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.setDevices(devices)
+	var chosen device
+	for _, d := range devices {
+		if d.hasConnection(serial) {
+			chosen = d
+			a.selected = d.key()
+		}
+	}
+	if chosen.Identity == "" || chosen.State != "device" {
+		t.Fatalf("authorized physical phone not identified: %+v", chosen)
+	}
+	out, err := b.run(ctx, "devices", "-l")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range parseDevices(out) {
+		if raw.State != "device" {
+			continue
+		}
+		identity := b.readPhoneInfo(ctx, raw.Serial).Identity
+		matches := 0
+		for _, d := range devices {
+			if d.Identity == identity && d.hasConnection(raw.Serial) {
+				matches++
+			}
+		}
+		if identity == "" || matches != 1 {
+			t.Fatalf("real transport did not resolve to exactly one physical phone: %s", raw.Serial)
+		}
+	}
+	if path := os.Getenv("SCRCPY_GUI_DEVICE_LIST_SCREENSHOT"); path != "" {
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = png.Encode(file, ui.NewTester(a.view, 1080, 880).Image())
+		file.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.start()
+	select {
+	case update := <-a.updates:
+		update()
+	case <-time.After(15 * time.Second):
+		t.Fatal("real session startup timed out")
+	}
+	session := a.selectedSession()
+	if session == nil {
+		t.Fatalf("real session failed to start: %s", a.errorText)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(a.logs.String(), "INFO: Texture") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no decoded real video: %s", a.logs.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	devices, _, err = b.discover(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.setDevices(devices)
+	if a.selected != chosen.key() || a.selectedSession() != session || session.cmd.ProcessState != nil {
+		t.Fatal("real refresh disturbed running session or selection")
+	}
+	a.start()
+	if a.busy || len(a.sessions) != 1 {
+		t.Fatal("refreshed phone could start a duplicate session")
+	}
+	a.stop(session)
+	select {
+	case update := <-a.updates:
+		update()
+	case <-time.After(5 * time.Second):
+		t.Fatal("real session did not stop")
+	}
+	a.workers.Wait()
+	if len(a.sessions) != 0 || a.errorText != "" {
+		t.Fatalf("real stop failed: %s", a.errorText)
+	}
+	t.Logf("%d phone/service cards; name %q; all real ADB aliases resolve once; video decoded; refresh/duplicate guard/stop passed", len(devices), chosen.displayName())
+}
 
 // Opt in only with an authorized phone. This exercises the GUI session worker,
 // including cancellation on exit, instead of just launching scrcpy directly.

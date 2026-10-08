@@ -20,6 +20,15 @@ type windowControls interface {
 	IsFullScreen() bool
 }
 
+type deviceSession struct {
+	key, serial, name string
+	label             string
+	playback          playbackOptions
+	cmd               *exec.Cmd
+	cancel            context.CancelFunc
+	stopping          bool
+}
+
 type application struct {
 	ctx             context.Context
 	b               *backend
@@ -46,9 +55,7 @@ type application struct {
 	showPair        bool
 	busy            bool
 	cancelJob       context.CancelFunc
-	session         *exec.Cmd
-	stopSession     context.CancelFunc
-	stopping        bool
+	sessions        []*deviceSession
 	status          string
 	detail          string
 	errorText       string
@@ -58,7 +65,7 @@ func newApplication(ctx context.Context, b *backend) *application {
 	a := &application{ctx: ctx, b: b, updates: make(chan func(), 16), preset: 1,
 		custom:      [2]customPreset{{"1600", "60", "6"}, {"0", "120", "40"}},
 		audioPreset: 1, customAudio: "128", customBuffer: "2", logs: &sessionLog{},
-		playback: playbackOptions{BufferMS: 2000, KeyboardUHID: true, AudioCodec: "opus", ScaleMode: string(scaleFit)}, networks: localNetworks(), status: "准备就绪"}
+		playback: playbackOptions{BufferMS: 2000, KeyboardUHID: true, MuteOnStop: true, AudioCodec: "opus", ScaleMode: string(scaleFit)}, networks: localNetworks(), status: "准备就绪"}
 	if b != nil {
 		b.logs = a.logs
 	}
@@ -206,7 +213,7 @@ func (a *application) pair() {
 }
 
 func (a *application) start() {
-	if a.session != nil {
+	if a.busy || a.b == nil || a.selectedSession() != nil {
 		return
 	}
 	var chosen device
@@ -268,6 +275,10 @@ func (a *application) start() {
 	if !playback.AudioOnly {
 		playback.Frames = &mirrorFrames{}
 	}
+	activeSerials := make(map[string]bool, len(a.sessions))
+	for _, session := range a.sessions {
+		activeSerials[session.serial] = true
+	}
 	a.work(message, func(ctx context.Context) (func(), error) {
 		serial := chosen.Serial
 		if chosen.Address != "" {
@@ -285,13 +296,16 @@ func (a *application) start() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if activeSerials[serial] {
+			return nil, fmt.Errorf("设备 %s 已有运行中的会话，请先停止该设备", serial)
+		}
 		sessionCtx, cancel := context.WithCancel(a.ctx)
 		cmd, _, err := a.b.start(sessionCtx, serial, p, playback)
 		if err != nil {
 			cancel()
 			return nil, err
 		}
-		type result struct{ err, restoreErr error }
+		type result struct{ err, restoreErr, muteErr error }
 		done := make(chan result, 1)
 		shortcutsDone := make(chan struct{})
 		a.workers.Add(1)
@@ -301,7 +315,7 @@ func (a *application) start() {
 			if playback.AudioOnly {
 				return
 			}
-			if err := runMirrorWindow(sessionCtx, cmd.Process.Pid, playback, a.b, serial, cancel); err != nil {
+			if err := runMirrorWindow(sessionCtx, cmd.Process.Pid, playback, serial, cancel); err != nil {
 				a.logs.printf("ERROR 投屏缩放窗口: %v", err)
 				cancel()
 			}
@@ -312,6 +326,15 @@ func (a *application) start() {
 			err := cmd.Wait()
 			cancel()
 			<-shortcutsDone
+			var muteErr error
+			if playback.MuteOnStop {
+				muteErr = a.b.muteMedia(serial)
+				if muteErr != nil {
+					a.logs.printf("ERROR %v", muteErr)
+				} else {
+					a.logs.printf("INFO %s 媒体音量已设为 0", serial)
+				}
+			}
 			var restoreErr error
 			if playback.TurnScreenOff {
 				restoreErr = a.b.restoreScreen(serial)
@@ -322,49 +345,85 @@ func (a *application) start() {
 				}
 			}
 			a.logs.printf("INFO scrcpy 已退出: %v", err)
-			done <- result{err, restoreErr}
+			done <- result{err, restoreErr, muteErr}
 		}()
 		return func() {
-			a.session, a.stopSession, a.stopping = cmd, cancel, false
+			session := &deviceSession{key: chosen.key(), serial: serial, name: chosen.Name,
+				label: p.Name, playback: playback, cmd: cmd, cancel: cancel}
+			a.sessions = append(a.sessions, session)
 			buffer := "额外音视频缓存已关闭"
 			if playback.BufferMS > 0 {
 				buffer = fmt.Sprintf("音视频缓存 %s 秒", bufferSeconds(playback.BufferMS))
 			}
-			a.status, a.detail = "投屏运行中 · "+p.Name, buffer+"；投屏窗口 Alt+Z 调节画面缩放，F11 切换全屏，Esc 退出全屏，Alt+Q 关闭。"
+			a.status, a.detail = "投屏运行中 · "+p.Name, buffer+"；F11 全屏后按 Alt+Z 选择区域，Alt+Q 关闭。可继续选择其他设备启动。"
 			if playback.AudioOnly {
 				buffer = "额外音频缓存已关闭"
 				if playback.BufferMS > 0 {
 					buffer = fmt.Sprintf("音频缓存 %s 秒", bufferSeconds(playback.BufferMS))
 				}
-				a.status, a.detail = "音频运行中 · "+p.Name, buffer+"；仅转发设备声音，不打开投屏窗口。点击停止音频结束。"
+				a.status, a.detail = "音频运行中 · "+p.Name, buffer+"；不打开投屏窗口。可继续选择其他设备启动，每台设备可单独停止。"
 			}
 			if playback.TurnScreenOff {
 				a.detail += " 已请求关闭设备屏幕电源。"
 			}
+			if playback.MuteOnStop {
+				a.detail += " 结束后自动静音该设备。"
+			}
 			go func() {
 				result := <-done
 				a.post(func() {
-					a.session, a.stopSession = nil, nil
-					a.status, a.detail = "投屏已结束", ""
-					if playback.AudioOnly {
-						a.status = "音频已结束"
-					}
-					if result.err != nil && !a.stopping {
-						a.errorText = result.err.Error()
-						a.logs.printf("ERROR 投屏异常退出: %v", result.err)
-					}
-					if playback.TurnScreenOff {
-						a.detail = "已请求恢复设备亮屏。"
-						if result.restoreErr != nil {
-							a.errorText += "\n" + result.restoreErr.Error()
-							a.detail = ""
-						}
-					}
-					a.stopping = false
+					a.finishSession(session, result.err, result.restoreErr, result.muteErr)
 				})
 			}()
 		}, nil
 	})
+}
+
+func (a *application) selectedSession() *deviceSession {
+	for _, session := range a.sessions {
+		if a.selected == session.key || a.selected == session.serial {
+			return session
+		}
+	}
+	return nil
+}
+
+func (a *application) stop(session *deviceSession) {
+	if !session.stopping {
+		session.stopping = true
+		session.cancel()
+	}
+}
+
+func (a *application) finishSession(session *deviceSession, err, restoreErr, muteErr error) {
+	for i, active := range a.sessions {
+		if active == session {
+			a.sessions = append(a.sessions[:i], a.sessions[i+1:]...)
+			break
+		}
+	}
+	a.status, a.detail = session.serial+" 会话已结束", ""
+	if len(a.sessions) > 0 {
+		a.detail = fmt.Sprintf("其他 %d 台设备继续运行。", len(a.sessions))
+	}
+	if err != nil && !session.stopping {
+		a.errorText = session.serial + ": " + err.Error()
+		a.logs.printf("ERROR %s 会话异常退出: %v", session.serial, err)
+	}
+	if session.playback.TurnScreenOff {
+		if restoreErr != nil {
+			a.errorText = strings.TrimSpace(a.errorText + "\n" + restoreErr.Error())
+		} else {
+			a.detail += " 已请求恢复设备亮屏。"
+		}
+	}
+	if session.playback.MuteOnStop {
+		if muteErr != nil {
+			a.errorText = strings.TrimSpace(a.errorText + "\n" + muteErr.Error())
+		} else {
+			a.detail += " 设备媒体声音已静音。"
+		}
+	}
 }
 
 func main() {

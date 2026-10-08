@@ -1,22 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"image"
-	"image/png"
-	"math"
-	"os/exec"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
 )
 
 var (
+	mirrorGDI32             = syscall.NewLazyDLL("gdi32.dll")
 	mirrorCreateWindow      = mirrorUser32.NewProc("CreateWindowExW")
 	mirrorDestroyWindow     = mirrorUser32.NewProc("DestroyWindow")
 	mirrorDefaultProc       = mirrorUser32.NewProc("DefWindowProcW")
@@ -24,13 +20,15 @@ var (
 	mirrorSetPosition       = mirrorUser32.NewProc("SetWindowPos")
 	mirrorClientRect        = mirrorUser32.NewProc("GetClientRect")
 	mirrorSetMenu           = mirrorUser32.NewProc("SetMenu")
-	mirrorActiveView        atomic.Pointer[mirrorView]
+	mirrorViews             sync.Map // window handle -> view; view state stays on its own thread
 	mirrorViewCallback      = syscall.NewCallback(mirrorViewProc)
 	mirrorFindChildCallback = syscall.NewCallback(func(window, _ uintptr) uintptr {
-		v := mirrorActiveView.Load()
-		if v == nil {
+		thread, _, _ := mirrorThreadID.Call()
+		entry, found := mirrorKeys.Load(thread)
+		if !found {
 			return 0
 		}
+		v := entry.(*mirrorKeyboardState).view
 		var owner uint32
 		mirrorWindowPID.Call(window, uintptr(unsafe.Pointer(&owner)))
 		visible, _, _ := mirrorUser32.NewProc("IsWindowVisible").Call(window)
@@ -42,29 +40,22 @@ var (
 	})
 )
 
-type mirrorCropResult struct {
-	crop image.Rectangle
-	w, h int
-	err  error
-}
-
-// All window state belongs to the message-loop thread. Screenshot workers
-// return immutable results through a channel; they never mutate window state.
+// Each device owns a message-loop thread and independent window/input state.
 type mirrorView struct {
-	window, child, menu, popup uintptr
-	pendingChild               uintptr
-	pid                        uint32
-	mode                       scaleMode
-	frames                     *mirrorFrames
-	frameW, frameH             int
-	crop, candidate            image.Rectangle
-	cropResults                chan mirrorCropResult
-	scanning                   bool
-	nextScan                   time.Time
-	fullscreen                 bool
-	menuOpen                   bool
-	windowed                   mirrorRect
-	cancel                     context.CancelFunc
+	window, child, menu, popup, overlay uintptr
+	pendingChild                        uintptr
+	pid                                 uint32
+	title                               string
+	mode                                scaleMode
+	frames                              *mirrorFrames
+	frameW, frameH                      int
+	crop                                image.Rectangle
+	selecting, dragging                 bool
+	selectionStart, selectionEnd        image.Point
+	fullscreen                          bool
+	menuOpen                            bool
+	windowed                            mirrorRect
+	cancel                              context.CancelFunc
 }
 
 func mirrorText(s string) *uint16 {
@@ -73,13 +64,21 @@ func mirrorText(s string) *uint16 {
 }
 
 func mirrorViewProc(window uintptr, message uint32, wParam, lParam uintptr) uintptr {
-	v := mirrorActiveView.Load()
-	if v != nil {
+	entry, found := mirrorViews.Load(window)
+	if found {
+		v := entry.(*mirrorView)
+		if window == v.overlay {
+			return v.selectionProc(window, message, wParam, lParam)
+		}
 		switch message {
 		case 0x5: // WM_SIZE
 			v.layout(window)
 		case 0x7: // WM_SETFOCUS
-			mirrorUser32.NewProc("SetFocus").Call(v.child)
+			if v.selecting {
+				mirrorUser32.NewProc("SetFocus").Call(v.overlay)
+			} else {
+				mirrorUser32.NewProc("SetFocus").Call(v.child)
+			}
 		case 0x211: // WM_ENTERMENULOOP
 			v.menuOpen = true
 		case 0x212: // WM_EXITMENULOOP
@@ -87,9 +86,17 @@ func mirrorViewProc(window uintptr, message uint32, wParam, lParam uintptr) uint
 		case 0x111: // WM_COMMAND
 			id := int(wParam & 0xffff)
 			if id >= 100 && id < 100+len(scaleModes) {
+				v.endSelection()
 				v.mode = scaleMode(scaleModes[id-100])
-				v.crop, v.candidate = image.Rectangle{}, image.Rectangle{}
-				v.nextScan = time.Time{}
+				v.crop = image.Rectangle{}
+				v.layout(window)
+			}
+			if id == 200 {
+				v.beginSelection()
+			}
+			if id == 201 {
+				v.endSelection()
+				v.mode, v.crop = scaleFit, image.Rectangle{}
 				v.layout(window)
 			}
 		case 0x8001: // Shortcut commands from our low-level hook.
@@ -99,7 +106,10 @@ func mirrorViewProc(window uintptr, message uint32, wParam, lParam uintptr) uint
 			case 2:
 				v.showScaleMenu()
 			case 3:
-				if v.fullscreen {
+				if v.selecting {
+					v.endSelection()
+					v.layout(window)
+				} else if v.fullscreen {
 					v.toggleFullscreen()
 				}
 			}
@@ -112,14 +122,25 @@ func mirrorViewProc(window uintptr, message uint32, wParam, lParam uintptr) uint
 	return r
 }
 
+func (v *mirrorView) renderedRect(width, height int) scaleRect {
+	mode, crop := v.mode, v.crop
+	if v.selecting {
+		mode, crop = scaleFit, image.Rectangle{}
+	}
+	return scaledMirrorRect(width, height, v.frameW, v.frameH, crop, mode)
+}
+
 func (v *mirrorView) layout(window uintptr) {
 	if v.child == 0 {
 		return
 	}
 	var client mirrorRect
 	mirrorClientRect.Call(window, uintptr(unsafe.Pointer(&client)))
-	r := scaledMirrorRect(int(client.Right), int(client.Bottom), v.frameW, v.frameH, v.crop, v.mode)
+	r := v.renderedRect(int(client.Right), int(client.Bottom))
 	mirrorSetPosition.Call(v.child, 0, uintptr(r.X), uintptr(r.Y), uintptr(r.W), uintptr(r.H), 0x34) // frame changed, no activate/z-order
+	if v.overlay != 0 {
+		mirrorSetPosition.Call(v.overlay, 0, 0, 0, uintptr(client.Right), uintptr(client.Bottom), 0x10) // HWND_TOP, no activate
+	}
 	for i, mode := range scaleModes {
 		flags := uintptr(0)
 		if scaleMode(mode) == v.mode {
@@ -127,6 +148,16 @@ func (v *mirrorView) layout(window uintptr) {
 		} // MF_CHECKED
 		mirrorUser32.NewProc("CheckMenuItem").Call(v.popup, uintptr(100+i), flags)
 	}
+	flags := uintptr(1) // MF_GRAYED: selection is available in fullscreen only
+	if v.fullscreen {
+		flags = 0
+	}
+	mirrorUser32.NewProc("EnableMenuItem").Call(v.popup, 200, flags)
+	flags = 0
+	if v.mode == scaleManual {
+		flags = 8
+	}
+	mirrorUser32.NewProc("CheckMenuItem").Call(v.popup, 200, flags)
 	// Repaint uncovered borders after changing from fill/stretch to fit.
 	mirrorUser32.NewProc("InvalidateRect").Call(window, 0, 1)
 }
@@ -138,7 +169,7 @@ func (v *mirrorView) keepLayout() {
 	mirrorClientRect.Call(v.window, uintptr(unsafe.Pointer(&client)))
 	mirrorWindowRect.Call(v.child, uintptr(unsafe.Pointer(&child)))
 	mirrorUser32.NewProc("MapWindowPoints").Call(0, v.window, uintptr(unsafe.Pointer(&child)), 2)
-	want := scaledMirrorRect(int(client.Right), int(client.Bottom), v.frameW, v.frameH, v.crop, v.mode)
+	want := v.renderedRect(int(client.Right), int(client.Bottom))
 	if int(child.Left) != want.X || int(child.Top) != want.Y || int(child.Right-child.Left) != want.W || int(child.Bottom-child.Top) != want.H {
 		v.layout(v.window)
 	}
@@ -152,10 +183,15 @@ func (v *mirrorView) showScaleMenu() {
 	if id != 0 {
 		mirrorViewProc(v.window, 0x111, id, 0)
 	}
-	mirrorUser32.NewProc("SetFocus").Call(v.child)
+	if v.selecting {
+		mirrorUser32.NewProc("SetFocus").Call(v.overlay)
+	} else {
+		mirrorUser32.NewProc("SetFocus").Call(v.child)
+	}
 }
 
 func (v *mirrorView) toggleFullscreen() {
+	v.endSelection()
 	if !v.fullscreen {
 		mirrorWindowRect.Call(v.window, uintptr(unsafe.Pointer(&v.windowed)))
 		monitor, _, _ := mirrorMonitor.Call(v.window, 2)
@@ -209,12 +245,16 @@ func (v *mirrorView) attach(child uintptr, fullscreen bool) error {
 	for i, mode := range scaleModes {
 		mirrorUser32.NewProc("AppendMenuW").Call(v.popup, 0, uintptr(100+i), uintptr(unsafe.Pointer(mirrorText(mode))))
 	}
+	mirrorUser32.NewProc("AppendMenuW").Call(v.popup, 0x800, 0, 0) // separator
+	mirrorUser32.NewProc("AppendMenuW").Call(v.popup, 0, 200, uintptr(unsafe.Pointer(mirrorText("选择显示区域（仅全屏）"))))
+	mirrorUser32.NewProc("AppendMenuW").Call(v.popup, 0, 201, uintptr(unsafe.Pointer(mirrorText("重置显示区域"))))
 	mirrorUser32.NewProc("AppendMenuW").Call(v.menu, 0x10, v.popup, uintptr(unsafe.Pointer(mirrorText("画面缩放（Alt+Z）"))))
-	v.window, _, err = mirrorCreateWindow.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(mirrorText("scrcpy LAN · 投屏 · Alt+Z 缩放"))), 0x06cf0000,
+	v.window, _, err = mirrorCreateWindow.Call(0, uintptr(unsafe.Pointer(className)), uintptr(unsafe.Pointer(mirrorText("scrcpy LAN · "+v.title+" · Alt+Z 缩放"))), 0x06cf0000,
 		uintptr(bounds.Left), uintptr(bounds.Top), uintptr(bounds.Right-bounds.Left), uintptr(bounds.Bottom-bounds.Top+24), 0, v.menu, module, 0)
 	if v.window == 0 {
 		return fmt.Errorf("创建投屏窗口: %w", err)
 	}
+	mirrorViews.Store(v.window, v)
 	// Official scrcpy stays responsible for decoding, sound and all phone input.
 	mirrorSetStyle.Call(child, ^uintptr(15), 0x50000000) // WS_CHILD | WS_VISIBLE
 	mirrorSetStyle.Call(child, ^uintptr(19), 0)          // remove top-level extended styles
@@ -233,25 +273,7 @@ func (v *mirrorView) attach(child uintptr, fullscreen bool) error {
 	return nil
 }
 
-func captureMirrorCrop(ctx context.Context, b *backend, serial string) mirrorCropResult {
-	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, b.adb, "-s", serial, "exec-out", "screencap", "-p")
-	hideConsole(cmd)
-	cmd.WaitDelay = time.Second
-	data, err := cmd.Output()
-	if err != nil {
-		return mirrorCropResult{err: err}
-	}
-	img, err := png.Decode(bytes.NewReader(data))
-	if err != nil {
-		return mirrorCropResult{err: err}
-	}
-	bounds := img.Bounds()
-	return mirrorCropResult{crop: blackBarCrop(img), w: bounds.Dx(), h: bounds.Dy()}
-}
-
-func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, b *backend, serial string, cancel context.CancelFunc) error {
+func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, serial string, cancel context.CancelFunc) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	// Match SDL's per-monitor pixel coordinates, including mixed-DPI desktops.
@@ -266,29 +288,26 @@ func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, b *
 	thread, _, _ := mirrorThreadID.Call()
 	stop := context.AfterFunc(ctx, func() { mirrorPostThread.Call(thread, 0x12, 0, 0) })
 	defer stop()
-	scanCtx, stopScan := context.WithCancel(ctx)
-	var scans sync.WaitGroup
-	defer func() { stopScan(); scans.Wait() }()
-	v := &mirrorView{pid: uint32(pid), mode: scaleMode(playback.ScaleMode), frames: playback.Frames, cancel: cancel, cropResults: make(chan mirrorCropResult, 1)}
+	v := &mirrorView{pid: uint32(pid), title: serial, mode: scaleMode(playback.ScaleMode), frames: playback.Frames, cancel: cancel}
 	if v.frames == nil {
 		v.frames = &mirrorFrames{}
 	}
-	mirrorActiveView.Store(v)
-	defer mirrorActiveView.CompareAndSwap(v, nil)
 	defer func() {
+		v.endSelection()
 		if v.child != 0 {
 			mirrorPostMessage.Call(v.child, 0x10, 0, 0)
 		}
 		if v.window != 0 {
 			mirrorDestroyWindow.Call(v.window)
+			mirrorViews.Delete(v.window)
 		}
 		if v.menu != 0 {
 			mirrorUser32.NewProc("DestroyMenu").Call(v.menu)
 		}
 	}()
 	state := &mirrorKeyboardState{pid: uint32(pid), view: v}
-	mirrorKeys.Store(state)
-	defer mirrorKeys.CompareAndSwap(state, nil)
+	mirrorKeys.Store(thread, state)
+	defer mirrorKeys.Delete(thread)
 	module, _, _ := mirrorModule.Call(0)
 	hook, _, err := mirrorSetHook.Call(13, mirrorKeyCallback, module, 0)
 	if hook == 0 {
@@ -313,8 +332,11 @@ func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, b *
 			w, h := v.frames.size()
 			if w > 0 && h > 0 && (w != v.frameW || h != v.frameH) {
 				v.frameW, v.frameH = w, h
-				v.crop, v.candidate = image.Rectangle{}, image.Rectangle{}
-				v.nextScan = time.Time{}
+				v.endSelection()
+				v.crop = image.Rectangle{}
+				if v.mode == scaleManual {
+					v.mode = scaleFit
+				}
 				if v.window != 0 {
 					v.layout(v.window)
 				}
@@ -337,30 +359,6 @@ func runMirrorWindow(ctx context.Context, pid int, playback playbackOptions, b *
 					return nil
 				}
 				v.keepLayout()
-			}
-			select {
-			case crop := <-v.cropResults:
-				v.scanning = false
-				if v.mode == scaleAuto && crop.err == nil && !crop.crop.Empty() && math.Abs(float64(crop.w)/float64(crop.h)-float64(v.frameW)/float64(v.frameH)) < 0.01 {
-					c := image.Rect(crop.crop.Min.X*v.frameW/crop.w, crop.crop.Min.Y*v.frameH/crop.h, crop.crop.Max.X*v.frameW/crop.w, crop.crop.Max.Y*v.frameH/crop.h)
-					if v.crop.Empty() || c == v.candidate {
-						v.crop = c
-						v.layout(v.window)
-					}
-					v.candidate = c
-				}
-			default:
-			}
-			if v.window != 0 && v.mode == scaleAuto && !v.scanning && time.Now().After(v.nextScan) {
-				v.scanning = true
-				v.nextScan = time.Now().Add(3 * time.Second)
-				scans.Go(func() {
-					crop := captureMirrorCrop(scanCtx, b, serial)
-					select {
-					case v.cropResults <- crop:
-					case <-scanCtx.Done():
-					}
-				})
 			}
 		}
 		mirrorTranslateMessage.Call(uintptr(unsafe.Pointer(&message)))

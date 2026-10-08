@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image/png"
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -94,7 +93,7 @@ func TestNativeViewAtMinimumSize(t *testing.T) {
 	if err := tt.Click("画面缩放模式"); err != nil {
 		t.Fatal(err)
 	}
-	if err := tt.Click(string(scaleAuto)); err != nil || a.playback.ScaleMode != string(scaleAuto) {
+	if err := tt.Click(string(scaleFill)); err != nil || a.playback.ScaleMode != string(scaleFill) {
 		t.Fatal("scale selection was not reachable at minimum size")
 	}
 	if path := os.Getenv("SCRCPY_GUI_MIN_SCREENSHOT"); path != "" {
@@ -135,8 +134,8 @@ func TestNativeViewCompactLayout(t *testing.T) {
 			if err := tt.Click("画面缩放模式"); err != nil {
 				t.Fatal("window setting is not clickable without scrolling")
 			}
-			if err := tt.Click(string(scaleAuto)); err != nil || a.playback.ScaleMode != string(scaleAuto) {
-				t.Fatal("adaptive scale selection failed")
+			if err := tt.Click(string(scaleFill)); err != nil || a.playback.ScaleMode != string(scaleFill) {
+				t.Fatal("fill scale selection failed")
 			}
 			if path := os.Getenv("SCRCPY_GUI_LAYOUT_SCREENSHOT"); path != "" {
 				file, err := os.Create(fmt.Sprintf("%s-%dx%d.png", path, size[0], size[1]))
@@ -227,22 +226,25 @@ func TestWiredModeAndPlaybackSettings(t *testing.T) {
 	if a.playback.BufferMS != 1000 || !a.playback.Fullscreen || a.playback.ScaleMode != string(scaleStretch) {
 		t.Fatal("playback settings did not change")
 	}
-	a.session = &exec.Cmd{}
+	a.sessions = []*deviceSession{{key: a.selected, playback: a.playback}}
 	tt.Frame()
 	for _, label := range []string{"无线 / 局域网", "关闭缓存", "2 秒缓存", "投屏启动时全屏（覆盖任务栏）"} {
 		if err := tt.Click(label); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if !a.wired || a.playback.BufferMS != 1000 || !a.playback.Fullscreen {
-		t.Fatal("running session allowed changes to startup settings")
+	if a.wired || a.playback.BufferMS != 2000 || a.playback.Fullscreen {
+		t.Fatal("running device blocked settings for the next session")
 	}
-	a.session = nil
+	if a.sessions[0].playback.BufferMS != 1000 || !a.sessions[0].playback.Fullscreen {
+		t.Fatal("next-session settings changed the running device snapshot")
+	}
+	a.sessions = nil
 	tt.Frame()
 	if err := tt.Click("无线 / 局域网"); err != nil {
 		t.Fatal(err)
 	}
-	if a.wired || a.selected != "192.168.1.10:5555" || a.preset != 1 || a.playback.BufferMS != 1000 {
+	if a.wired || a.selected != "192.168.1.10:5555" || a.preset != 1 || a.playback.BufferMS != 2000 {
 		t.Fatal("wireless mode did not restore selection or preserve buffer settings")
 	}
 }
@@ -268,17 +270,17 @@ func TestCustomPresetInputsAndModeIsolation(t *testing.T) {
 	if a.preset != len(presets) || *a.customSettings() != (customPreset{"1280", "90", "8"}) {
 		t.Fatalf("custom inputs did not update: %+v", a.customSettings())
 	}
-	a.session = &exec.Cmd{}
+	a.sessions = []*deviceSession{{key: a.selected, playback: a.playback}}
 	tt.Frame()
 	if err := tt.Click("帧率上限（fps）"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Key(ui.Ctrl, ui.KeyA)
 	tt.Type("30")
-	if a.customSettings().FPS != "90" {
-		t.Fatal("running session allowed custom input changes")
+	if a.customSettings().FPS != "30" {
+		t.Fatal("running device blocked custom settings for the next session")
 	}
-	a.session = nil
+	a.sessions = nil
 	a.setMode(true)
 	tt.Frame()
 	tt.Scroll(900, 500, 0, -500)
@@ -289,7 +291,7 @@ func TestCustomPresetInputsAndModeIsolation(t *testing.T) {
 		t.Fatal("USB mode did not offer its own custom settings")
 	}
 	a.setMode(false)
-	if *a.customSettings() != (customPreset{"1280", "90", "8"}) {
+	if *a.customSettings() != (customPreset{"1280", "30", "8"}) {
 		t.Fatal("mode switch lost wireless custom settings")
 	}
 }
@@ -337,7 +339,7 @@ func TestAudioModeInputsAndDisabledSettings(t *testing.T) {
 	if a.customAudio != "173" || !a.playback.TurnScreenOff {
 		t.Fatal("audio custom bitrate or screen power setting did not change")
 	}
-	a.session = &exec.Cmd{}
+	a.sessions = []*deviceSession{{key: a.selected, playback: a.playback}}
 	tt.Frame()
 	if !tt.HasText("停止音频") {
 		t.Fatal("running audio session has no stop action")
@@ -346,23 +348,58 @@ func TestAudioModeInputsAndDisabledSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	tt.Scroll(900, 500, 0, -1000)
-	for _, label := range []string{"画面和声音", "标准 · 128 Kbps", "音频码率（Kbps，6–9000）"} {
-		if err := tt.Click(label); err != nil {
-			t.Fatal(err)
-		}
+	if err := tt.Click("画面和声音"); err != nil {
+		t.Fatal(err)
 	}
-	tt.Key(ui.Ctrl, ui.KeyA)
-	tt.Type("64")
-	if !a.playback.AudioOnly || !a.playback.TurnScreenOff || a.audioPreset != len(audioPresets) || a.customAudio != "173" {
-		t.Fatal("running audio session allowed startup settings to change")
+	if a.playback.AudioOnly || a.playback.TurnScreenOff || !a.sessions[0].playback.AudioOnly || !a.sessions[0].playback.TurnScreenOff || !tt.HasText("停止音频") {
+		t.Fatal("next-session mode did not remain independent from running audio")
 	}
-	a.session = nil
+	a.sessions = nil
 	tt.Frame()
 	if err := tt.Click("画面和声音"); err != nil {
 		t.Fatal(err)
 	}
-	if !tt.HasText("开始投屏") || a.preset != 1 || a.customAudio != "173" || !a.playback.KeyboardUHID {
+	if !tt.HasText("开始投屏") || a.preset != 1 || !a.playback.KeyboardUHID {
 		t.Fatal("returning to video mode lost settings or the video start action")
+	}
+}
+
+func TestMultiDeviceSessionActions(t *testing.T) {
+	a := newApplication(context.Background(), &backend{})
+	a.setDevices([]device{{Name: "Phone A", Address: "192.168.1.10:5555"}, {Name: "Phone B", Address: "192.168.1.11:5555"}, {Name: "Phone C", Address: "192.168.1.12:5555"}})
+	stopped := [2]bool{}
+	a.sessions = []*deviceSession{
+		{key: a.devices[0].key(), serial: a.devices[0].key(), name: "Phone A", label: "均衡 · 60 fps", cancel: func() { stopped[0] = true }},
+		{key: a.devices[1].key(), serial: a.devices[1].key(), name: "Phone B", label: "仅音频 · OPUS · 128 Kbps", playback: playbackOptions{AudioOnly: true}, cancel: func() { stopped[1] = true }},
+	}
+	a.selected = a.devices[2].key()
+	tt := ui.NewTester(a.view, 1080, 880)
+	if !tt.HasText("开始投屏") || !tt.HasText("运行中的设备 · 2") || !tt.HasText("仅音频 · OPUS · 128 Kbps") {
+		t.Fatal("running devices hid the next-device action or session mode")
+	}
+	a.selected = a.devices[1].key()
+	tt.Frame()
+	if err := tt.Click("停止音频"); err != nil {
+		t.Fatal(err)
+	}
+	if stopped != [2]bool{false, true} {
+		t.Fatalf("stop affected the wrong device: %v", stopped)
+	}
+	if err := tt.Click("停止全部"); err != nil {
+		t.Fatal(err)
+	}
+	if stopped != [2]bool{true, true} {
+		t.Fatal("stop-all did not stop both devices")
+	}
+	if path := os.Getenv("SCRCPY_GUI_MULTI_SCREENSHOT"); path != "" {
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if err := png.Encode(file, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -426,14 +463,14 @@ func TestCustomBufferAndAudioCodecs(t *testing.T) {
 			t.Fatalf("incorrect codec controls for %s", codec)
 		}
 	}
-	a.session = &exec.Cmd{}
+	a.sessions = []*deviceSession{{key: a.selected, playback: a.playback}}
 	tt.Frame()
 	if err := tt.Click("缓存时间（秒，0–60）"); err != nil {
 		t.Fatal(err)
 	}
 	tt.Key(ui.Ctrl, ui.KeyA)
 	tt.Type("4")
-	if a.customBuffer != "1.735" {
-		t.Fatal("running session allowed buffer changes")
+	if a.customBuffer != "4" {
+		t.Fatal("running device blocked the next session's buffer settings")
 	}
 }

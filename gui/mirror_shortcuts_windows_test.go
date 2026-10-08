@@ -51,7 +51,7 @@ func checkNativeMirrorSession(serial string, playback playbackOptions) error {
 		return err
 	}
 	hookDone := make(chan error, 1)
-	go func() { hookDone <- runMirrorWindow(ctx, cmd.Process.Pid, playback, b, serial, cancel) }()
+	go func() { hookDone <- runMirrorWindow(ctx, cmd.Process.Pid, playback, serial, cancel) }()
 	defer func() {
 		cancel()
 		cmd.Wait()
@@ -68,7 +68,7 @@ func checkNativeMirrorSession(serial string, playback playbackOptions) error {
 		return false
 	}
 	title, _ := syscall.UTF16PtrFromString("scrcpy LAN · " + serial)
-	hostTitle, _ := syscall.UTF16PtrFromString("scrcpy LAN · 投屏 · Alt+Z 缩放")
+	hostTitle, _ := syscall.UTF16PtrFromString("scrcpy LAN · " + serial + " · Alt+Z 缩放")
 	findWindow := mirrorUser32.NewProc("FindWindowW")
 	var window uintptr
 	if !wait(func() bool {
@@ -140,7 +140,7 @@ func checkNativeMirrorSession(serial string, playback playbackOptions) error {
 	if !wait(func() bool { return mirrorIsFullscreen(window) }) {
 		return fmt.Errorf("F11 未进入全屏")
 	}
-	if !wait(func() bool { state := mirrorKeys.Load(); return state != nil && state.pid == uint32(cmd.Process.Pid) }) {
+	if _, found := mirrorViews.Load(window); !found {
 		return fmt.Errorf("投屏快捷键未安装")
 	}
 	key := mirrorUser32.NewProc("keybd_event")
@@ -175,15 +175,6 @@ func checkNativeMirrorSession(serial string, playback playbackOptions) error {
 		mirrorUser32.NewProc("SendMessageW").Call(window, 0x111, uintptr(100+i), 0)
 		crop := image.Rectangle{}
 		frameW, frameH := playback.Frames.size()
-		if scaleMode(mode) == scaleAuto {
-			result := captureMirrorCrop(ctx, b, serial)
-			if result.err != nil {
-				return fmt.Errorf("自适应真机截帧: %w", result.err)
-			}
-			if !result.crop.Empty() {
-				crop = image.Rect(result.crop.Min.X*frameW/result.w, result.crop.Min.Y*frameH/result.h, result.crop.Max.X*frameW/result.w, result.crop.Max.Y*frameH/result.h)
-			}
-		}
 		if !wait(func() bool {
 			var viewport, rendered, bounds mirrorRect
 			mirrorClientRect.Call(window, uintptr(unsafe.Pointer(&viewport)))
@@ -206,6 +197,76 @@ func checkNativeMirrorSession(serial string, playback playbackOptions) error {
 	if background {
 		controls = "window messages (foreground keyboard skipped)"
 	}
-	fmt.Printf("custom 1280px / 90fps / 8Mbps, buffer=%d fullscreen=%v: decoded; %s passed; all four scale modes and live black-bar capture passed\n", playback.BufferMS, playback.Fullscreen, controls)
+	if err := checkNativeSelection(window, child, playback.Frames); err != nil {
+		return err
+	}
+	fmt.Printf("custom 1280px / 90fps / 8Mbps, buffer=%d fullscreen=%v: decoded; %s passed; three scale modes and manual selection geometry passed\n", playback.BufferMS, playback.Fullscreen, controls)
+	return nil
+}
+
+func checkNativeSelection(window, child uintptr, frames *mirrorFrames) error {
+	send := mirrorUser32.NewProc("SendMessageW")
+	send.Call(window, 0x8001, 1, 0) // fullscreen
+	send.Call(window, 0x111, 200, 0)
+	overlay, _, _ := mirrorUser32.NewProc("FindWindowExW").Call(window, 0, 0, uintptr(unsafe.Pointer(mirrorText("选择显示区域"))))
+	if overlay == 0 {
+		return fmt.Errorf("全屏选区遮罩未创建")
+	}
+	var viewport mirrorRect
+	mirrorClientRect.Call(window, uintptr(unsafe.Pointer(&viewport)))
+	w, h := frames.size()
+	r := scaledMirrorRect(int(viewport.Right), int(viewport.Bottom), w, h, image.Rectangle{}, scaleFit)
+	selection := image.Rect(r.X+r.W/5, r.Y+r.H/5, r.X+r.W*3/4, r.Y+r.H*4/5)
+	point := func(p image.Point) uintptr { return uintptr(uint16(p.X)) | uintptr(uint16(p.Y))<<16 }
+	if os.Getenv("SCRCPY_GUI_MIRROR_BACKGROUND_TEST") == "1" {
+		send.Call(overlay, 0x201, 1, point(selection.Min))
+		send.Call(overlay, 0x200, 1, point(selection.Max))
+		send.Call(overlay, 0x202, 0, point(selection.Max))
+	} else {
+		start := struct{ X, Y int32 }{int32(selection.Min.X), int32(selection.Min.Y)}
+		end := struct{ X, Y int32 }{int32(selection.Max.X), int32(selection.Max.Y)}
+		mirrorUser32.NewProc("ClientToScreen").Call(overlay, uintptr(unsafe.Pointer(&start)))
+		mirrorUser32.NewProc("ClientToScreen").Call(overlay, uintptr(unsafe.Pointer(&end)))
+		hit, _, _ := mirrorUser32.NewProc("WindowFromPoint").Call(uintptr(uint32(start.X)) | uintptr(uint32(start.Y))<<32)
+		if hit != overlay {
+			return fmt.Errorf("选区未拦截鼠标，overlay=%x hit=%x", overlay, hit)
+		}
+		cursor := struct{ X, Y int32 }{}
+		mirrorUser32.NewProc("GetCursorPos").Call(uintptr(unsafe.Pointer(&cursor)))
+		defer mirrorUser32.NewProc("SetCursorPos").Call(uintptr(cursor.X), uintptr(cursor.Y))
+		mouse := mirrorUser32.NewProc("mouse_event")
+		mirrorUser32.NewProc("SetCursorPos").Call(uintptr(start.X), uintptr(start.Y))
+		mouse.Call(2, 0, 0, 0, 0)
+		time.Sleep(50 * time.Millisecond)
+		mirrorUser32.NewProc("SetCursorPos").Call(uintptr(end.X), uintptr(end.Y))
+		mouse.Call(4, 0, 0, 0, 0)
+		time.Sleep(100 * time.Millisecond)
+	}
+	crop := selectedMirrorCrop(selection, r, w, h)
+	want := scaledMirrorRect(int(viewport.Right), int(viewport.Bottom), w, h, crop, scaleManual)
+	var bounds mirrorRect
+	mirrorWindowRect.Call(child, uintptr(unsafe.Pointer(&bounds)))
+	mirrorUser32.NewProc("MapWindowPoints").Call(0, window, uintptr(unsafe.Pointer(&bounds)), 2)
+	if int(bounds.Left) != want.X || int(bounds.Top) != want.Y || int(bounds.Right-bounds.Left) != want.W || int(bounds.Bottom-bounds.Top) != want.H {
+		return fmt.Errorf("手动选区坐标不符: got=%+v want=%+v", bounds, want)
+	}
+	send.Call(window, 0x111, 200, 0) // reselect; Escape keeps existing crop
+	send.Call(window, 0x8001, 3, 0)
+	if !mirrorIsFullscreen(window) {
+		return fmt.Errorf("取消选区意外退出全屏")
+	}
+	var restored mirrorRect
+	mirrorWindowRect.Call(child, uintptr(unsafe.Pointer(&restored)))
+	mirrorUser32.NewProc("MapWindowPoints").Call(0, window, uintptr(unsafe.Pointer(&restored)), 2)
+	if restored != bounds {
+		return fmt.Errorf("取消重选未保留原区域")
+	}
+	send.Call(window, 0x111, 201, 0) // reset
+	mirrorWindowRect.Call(child, uintptr(unsafe.Pointer(&restored)))
+	mirrorUser32.NewProc("MapWindowPoints").Call(0, window, uintptr(unsafe.Pointer(&restored)), 2)
+	if int(restored.Left) != r.X || int(restored.Top) != r.Y || int(restored.Right-restored.Left) != r.W || int(restored.Bottom-restored.Top) != r.H {
+		return fmt.Errorf("选区重置未恢复完整画面")
+	}
+	send.Call(window, 0x8001, 3, 0)
 	return nil
 }

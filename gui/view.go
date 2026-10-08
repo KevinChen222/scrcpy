@@ -17,14 +17,14 @@ drain:
 			break drain
 		}
 	}
-	if a.busy || a.session != nil {
+	if a.busy || len(a.sessions) > 0 {
 		c.After(100 * time.Millisecond)
 	}
 	t := *c.Theme()
 	t.Accent, t.Radius, t.FontSize = ui.Hex("#157a66"), 8, 14
 	c.SetTheme(&t)
 	disabled := a.busy || a.b == nil
-	settingsDisabled := disabled || a.session != nil
+	settingsDisabled := disabled
 	if a.window != nil {
 		if c.Shortcut(0, ui.KeyF11) {
 			a.window.ToggleFullScreen()
@@ -67,6 +67,25 @@ drain:
 		ui.Row(c).Grow(1).Gap(16).AlignItems(ui.Stretch).Children(func() {
 			ui.Scroll(c).Width(deviceWidth).Shrink(0).Children(func() {
 				ui.Column(c).Gap(12).Children(func() {
+					if len(a.sessions) > 0 {
+						ui.Column(c).Padding(16).Gap(10).Background(t.Background).Radius(12).Border(1, t.Border).Children(func() {
+							ui.Textf(c, "运行中的设备 · %d", len(a.sessions)).FontSize(17).Bold()
+							for _, session := range a.sessions {
+								ui.Column(c).Key("session-" + session.key).Gap(4).Children(func() {
+									ui.Text(c, session.name).Bold().SingleLine()
+									ui.Text(c, session.serial).FontSize(12).TextColor(t.TextMuted).SingleLine()
+									ui.Text(c, session.label).FontSize(12).TextColor(t.Accent)
+									label := "停止此设备"
+									if session.stopping {
+										label = "正在停止…"
+									}
+									if ui.Button(c, label).Disabled(session.stopping).Clicked() {
+										a.stop(session)
+									}
+								})
+							}
+						})
+					}
 					ui.Column(c).Padding(16).Gap(10).Background(t.Background).Radius(12).Border(1, t.Border).Children(func() {
 						ui.Row(c).Gap(10).Children(func() {
 							title := "附近的设备"
@@ -203,7 +222,7 @@ drain:
 										continue
 									}
 									ui.Box(c).Key(p.Name).Children(func() {
-										button := ui.ButtonBase(c).FillWidth().Padding(12).Radius(8).Border(1, t.Border).Disabled(a.session != nil || disabled)
+										button := ui.ButtonBase(c).FillWidth().Padding(12).Radius(8).Border(1, t.Border).Disabled(settingsDisabled)
 										if a.preset == i {
 											button.Background(ui.Hex("#e7f4ef")).Border(1, t.Accent)
 										}
@@ -231,7 +250,7 @@ drain:
 									ui.TextInput(c, &settings.FPS).Label("帧率上限（fps）").Disabled(settingsDisabled).FillWidth()
 									ui.TextInput(c, &settings.BitrateMbps).Label("视频码率（Mbps）").Disabled(settingsDisabled).FillWidth()
 								}
-								ui.Text(c, "分辨率保持屏幕比例，帧率为上限；实际表现取决于手机和网络。切换档位需停止后重启投屏。").FontSize(12).TextColor(t.TextMuted)
+								ui.Text(c, "设置用于下次启动，不影响运行中的设备。更改已有设备档位需单独停止后重启。").FontSize(12).TextColor(t.TextMuted)
 							}
 						})
 						ui.Column(c).Gap(10).Children(func() {
@@ -270,13 +289,15 @@ drain:
 							ui.Text(c, "缓存缓解抖动并增加延迟，默认 2 秒。自定义支持三位小数；下次启动时生效。").FontSize(12).TextColor(t.TextMuted)
 							ui.Checkbox(c, &a.playback.TurnScreenOff, "启动后熄灭设备屏幕（关闭屏幕电源）").Disabled(settingsDisabled)
 							ui.Text(c, "勾选熄屏后，结束时自动请求重新亮屏。").FontSize(12).TextColor(t.TextMuted)
+							ui.Checkbox(c, &a.playback.MuteOnStop, "结束后静音设备媒体声音").Disabled(settingsDisabled)
+							ui.Text(c, "默认开启，结束后媒体音量设为 0；可用手机音量键调回。").FontSize(12).TextColor(t.TextMuted)
 							if !a.playback.AudioOnly {
 								ui.Text(c, "熄屏后继续投屏和操作；Alt+O 熄屏，Alt+Shift+O 亮屏。手机实体电源键会重新亮屏。").FontSize(12).TextColor(t.TextMuted)
 								ui.Checkbox(c, &a.playback.KeyboardUHID, "电脑键盘输入（UHID，支持手机输入法）").Disabled(settingsDisabled)
 								ui.Text(c, "点击投屏中的输入框后打字；中文由手机输入法处理。首次按 Alt+K 配置实体键盘。不兼容时取消勾选，恢复基础键盘输入。").FontSize(12).TextColor(t.TextMuted)
 								ui.Checkbox(c, &a.playback.Fullscreen, "投屏启动时全屏（覆盖任务栏）").Disabled(settingsDisabled)
 								ui.Select(c, &a.playback.ScaleMode, scaleModes).Label("画面缩放模式").Disabled(settingsDisabled).FillWidth()
-								ui.Text(c, "投屏中 Alt+Z 随时切换缩放；自适应识别黑边并保持比例。F11 全屏，Esc 退出。").FontSize(12).TextColor(t.TextMuted)
+								ui.Text(c, "F11 全屏后，Alt+Z → 选择显示区域，鼠标拖选后自动放大。Esc 取消选区或退出全屏。").FontSize(12).TextColor(t.TextMuted)
 							}
 						})
 					})
@@ -289,7 +310,7 @@ drain:
 				if ui.Button(c, "打开日志窗口").Clicked() {
 					a.openLogWindow()
 				}
-				if a.session == nil {
+				if session := a.selectedSession(); session == nil {
 					pairing := false
 					for _, d := range devices {
 						if d.key() == a.selected {
@@ -306,12 +327,16 @@ drain:
 					}
 				} else {
 					label := "停止投屏"
-					if a.playback.AudioOnly {
+					if session.playback.AudioOnly {
 						label = "停止音频"
 					}
-					if ui.Button(c, label).Disabled(a.stopping).Clicked() {
-						a.stopping = true
-						a.stopSession()
+					if ui.Button(c, label).Disabled(session.stopping).Clicked() {
+						a.stop(session)
+					}
+				}
+				if len(a.sessions) > 1 && ui.Button(c, "停止全部").Clicked() {
+					for _, session := range a.sessions {
+						a.stop(session)
 					}
 				}
 				if a.busy && ui.Button(c, "取消操作").Clicked() {

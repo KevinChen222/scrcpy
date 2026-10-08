@@ -50,6 +50,7 @@ type playbackOptions struct {
 	ScaleMode        string
 	Frames           *mirrorFrames
 	TurnScreenOff    bool
+	MuteOnStop       bool
 	KeyboardUHID     bool
 	AudioOnly        bool
 	AudioCodec       string

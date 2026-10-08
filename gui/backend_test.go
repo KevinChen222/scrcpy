@@ -269,11 +269,12 @@ func TestAudioOnlySessionValidationAndStop(t *testing.T) {
 	b := &backend{adb: exe, scrcpy: exe, run: func(_ context.Context, _ ...string) (string, error) { return "device\n", nil }}
 	a := newApplication(ctx, b)
 	a.wired, a.playback.AudioOnly = true, true
+	a.playback.MuteOnStop = false
 	a.preset, a.custom[1].FPS = len(presets), "invalid"
 	a.audioPreset, a.customAudio = len(audioPresets), "invalid"
 	a.setDevices([]device{{Serial: "usb-phone", State: "device"}})
 	a.start()
-	if a.busy || a.session != nil || a.errorText == "" {
+	if a.busy || len(a.sessions) > 0 || a.errorText == "" {
 		t.Fatal("invalid audio settings launched a job or failed to show an error")
 	}
 	a.customAudio = "173"
@@ -284,7 +285,7 @@ func TestAudioOnlySessionValidationAndStop(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("audio session did not start")
 	}
-	if a.session == nil || !strings.Contains(a.status, "音频运行中") || !strings.Contains(a.detail, "不打开投屏窗口") {
+	if len(a.sessions) == 0 || !strings.Contains(a.status, "音频运行中") || !strings.Contains(a.detail, "不打开投屏窗口") {
 		t.Fatalf("audio session did not ignore unused video settings or report its mode: %s %s", a.status, a.errorText)
 	}
 	deadline := time.Now().Add(3 * time.Second)
@@ -300,8 +301,7 @@ func TestAudioOnlySessionValidationAndStop(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	a.stopping = true
-	a.stopSession()
+	a.stop(a.selectedSession())
 	select {
 	case update := <-a.updates:
 		update()
@@ -309,7 +309,7 @@ func TestAudioOnlySessionValidationAndStop(t *testing.T) {
 		t.Fatal("audio session did not stop")
 	}
 	a.workers.Wait()
-	if a.session != nil || a.stopSession != nil || a.stopping || a.status != "音频已结束" || a.errorText != "" {
+	if len(a.sessions) > 0 || !strings.Contains(a.status, "会话已结束") || a.errorText != "" {
 		t.Fatalf("audio stop did not clean up session: %s %s", a.status, a.errorText)
 	}
 }
@@ -388,7 +388,7 @@ func TestCustomPresetValidationAndArguments(t *testing.T) {
 	a.setDevices([]device{{Serial: "usb-phone", State: "device"}})
 	a.customSettings().FPS = "invalid"
 	a.start()
-	if a.busy || a.session != nil || a.errorText == "" {
+	if a.busy || len(a.sessions) > 0 || a.errorText == "" {
 		t.Fatal("invalid custom settings launched a job or failed to show an error")
 	}
 }

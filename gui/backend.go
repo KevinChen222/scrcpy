@@ -395,6 +395,22 @@ func (b *backend) restoreScreen(serial string) error {
 	return nil
 }
 
+// Setting a value is idempotent, unlike a volume-mute key which toggles state.
+// A fresh context also completes cleanup when the GUI is closing.
+func (b *backend) muteMedia(serial string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := b.run(ctx, "-s", serial, "shell", "cmd", "media_session", "volume", "--stream", "3", "--set", "0", "--get")
+	if err != nil {
+		return fmt.Errorf("设备 %s 媒体静音失败: %w", serial, err)
+	}
+	// Android may print an error with exit code 0; verify the resulting volume.
+	if !strings.Contains(out, "volume is 0 in range") {
+		return fmt.Errorf("设备 %s 未确认媒体音量为 0: %s", serial, strings.TrimSpace(out))
+	}
+	return nil
+}
+
 func (b *backend) start(ctx context.Context, serial string, p preset, playback playbackOptions) (*exec.Cmd, *sessionLog, error) {
 	args := p.args(serial, playback)
 	if b.logs.isEnabled() {

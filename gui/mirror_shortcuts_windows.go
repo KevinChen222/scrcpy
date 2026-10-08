@@ -1,7 +1,7 @@
 package main
 
 import (
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"unsafe"
 )
@@ -27,7 +27,7 @@ var (
 	mirrorDispatchMessage  = mirrorUser32.NewProc("DispatchMessageW")
 	mirrorThreadID         = mirrorKernel32.NewProc("GetCurrentThreadId")
 	mirrorModule           = mirrorKernel32.NewProc("GetModuleHandleW")
-	mirrorKeys             atomic.Pointer[mirrorKeyboardState]
+	mirrorKeys             sync.Map // message-loop thread ID -> keyboard state
 	mirrorKeyCallback      = syscall.NewCallback(handleMirrorKey)
 )
 
@@ -80,8 +80,10 @@ func mirrorModifiersDown() bool {
 }
 
 func handleMirrorKey(code int32, message uintptr, key *uint32) uintptr {
-	state := mirrorKeys.Load()
-	if code == 0 && state != nil && state.view != nil {
+	thread, _, _ := mirrorThreadID.Call()
+	entry, found := mirrorKeys.Load(thread)
+	if code == 0 && found {
+		state := entry.(*mirrorKeyboardState)
 		v := state.view
 		if state.shortcutHeld == *key {
 			if message == 0x101 || message == 0x105 {
@@ -96,7 +98,7 @@ func handleMirrorKey(code int32, message uintptr, key *uint32) uintptr {
 			if *key == 0x7a && !mirrorModifiersDown() {
 				command = 1
 			}
-			if *key == 0x1b && v.fullscreen && !v.menuOpen && !mirrorModifiersDown() {
+			if *key == 0x1b && (v.fullscreen || v.selecting) && !v.menuOpen && !mirrorModifiersDown() {
 				command = 3
 			}
 			alt, _, _ := mirrorKeyState.Call(0x12)

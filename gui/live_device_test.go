@@ -45,7 +45,7 @@ func TestLiveDeviceScreenRestoreAndAudio(t *testing.T) {
 			case <-time.After(15 * time.Second):
 				t.Fatal("session start timed out")
 			}
-			if a.session == nil {
+			if len(a.sessions) == 0 {
 				t.Fatalf("session did not start: %s", a.errorText)
 			}
 			wait := func(check func() bool) bool {
@@ -67,10 +67,10 @@ func TestLiveDeviceScreenRestoreAndAudio(t *testing.T) {
 			if test.codec == "video" {
 				decoded = "INFO: Texture"
 			}
-			if !wait(func() bool { return strings.Contains(a.logs.String(), decoded) || a.session == nil }) {
+			if !wait(func() bool { return strings.Contains(a.logs.String(), decoded) || len(a.sessions) == 0 }) {
 				t.Fatalf("no decoded stream: %s", a.logs.String())
 			}
-			if a.session == nil {
+			if len(a.sessions) == 0 {
 				if test.bitrate == 9000 && a.errorText != "" {
 					t.Logf("9000 Kbps rejected by encoder as expected; GUI reported: %s", a.errorText)
 					return
@@ -92,18 +92,23 @@ func TestLiveDeviceScreenRestoreAndAudio(t *testing.T) {
 			case "quit":
 				cancel()
 			case "kill":
-				if err := a.session.Process.Kill(); err != nil {
+				if err := a.selectedSession().cmd.Process.Kill(); err != nil {
 					t.Fatal(err)
 				}
 			default:
-				a.stopping = true
-				a.stopSession()
+				a.stop(a.selectedSession())
 			}
 			a.workers.Wait()
+			volumeCtx, volumeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+			volume, volumeErr := b.run(volumeCtx, "-s", serial, "shell", "cmd", "media_session", "volume", "--stream", "3", "--get")
+			volumeCancel()
+			if volumeErr != nil || !strings.Contains(volume, "volume is 0 in range") {
+				t.Fatalf("physical media volume was not muted: %s %v", volume, volumeErr)
+			}
 			if !wait(func() bool { return power("ON") }) {
 				t.Fatalf("physical display did not turn on: %s", a.logs.String())
 			}
-			t.Logf("%s decoded; physical display OFF → ON after %s; 0.5-second buffer", test.codec, test.ending)
+			t.Logf("%s decoded; physical display OFF → ON and media volume 0 after %s; 0.5-second buffer", test.codec, test.ending)
 		})
 	}
 }

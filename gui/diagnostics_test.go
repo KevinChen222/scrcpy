@@ -27,7 +27,7 @@ func TestCustomBufferValidation(t *testing.T) {
 	a.wired, a.useCustomBuffer, a.customBuffer = true, true, "invalid"
 	a.setDevices([]device{{Serial: "usb-phone", State: "device"}})
 	a.start()
-	if a.busy || a.session != nil || a.errorText == "" {
+	if a.busy || len(a.sessions) > 0 || a.errorText == "" {
 		t.Fatal("invalid custom buffer launched a session")
 	}
 }
@@ -111,6 +111,9 @@ func TestScreenRestoreForEverySessionExit(t *testing.T) {
 				defer cancel()
 				restored := make(chan []string, 1)
 				b := &backend{adb: exe, scrcpy: exe, run: func(ctx context.Context, args ...string) (string, error) {
+					if len(args) > 4 && args[3] == "cmd" && args[4] == "media_session" {
+						return "[V] volume is 0 in range [0..15]", nil
+					}
 					if len(args) > 3 && args[3] == "input" {
 						if ctx.Err() != nil {
 							return "", ctx.Err()
@@ -135,8 +138,7 @@ func TestScreenRestoreForEverySessionExit(t *testing.T) {
 					t.Fatalf("fractional cache display: %s", a.detail)
 				}
 				if ending == "stop" {
-					a.stopping = true
-					a.stopSession()
+					a.stop(a.selectedSession())
 				}
 				if ending == "quit" {
 					cancel()
@@ -157,8 +159,11 @@ func TestScreenRestoreForEverySessionExit(t *testing.T) {
 					case <-time.After(time.Second):
 						t.Fatal("missing end update")
 					}
-					if a.session != nil || !strings.Contains(a.detail, "恢复设备亮屏") {
+					if len(a.sessions) > 0 || !strings.Contains(a.detail, "恢复设备亮屏") {
 						t.Fatalf("incomplete cleanup: %s", a.detail)
+					}
+					if !strings.Contains(a.detail, "媒体声音已静音") {
+						t.Fatal("session exit did not report media mute")
 					}
 					if ending == "fail" && a.errorText == "" {
 						t.Fatal("capture error was not shown with logging disabled")

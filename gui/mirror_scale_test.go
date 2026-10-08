@@ -2,8 +2,6 @@ package main
 
 import (
 	"image"
-	"image/color"
-	"image/draw"
 	"strings"
 	"testing"
 )
@@ -15,7 +13,7 @@ func TestMirrorScalingAndPointerMapping(t *testing.T) {
 		want scaleRect
 	}{
 		{scaleFit, scaleRect{0, 108, 1920, 864}},
-		{scaleAuto, scaleRect{-240, 0, 2400, 1080}},
+		{scaleManual, scaleRect{-240, 0, 2400, 1080}},
 		{scaleFill, scaleRect{-240, 0, 2400, 1080}},
 		{scaleStretch, scaleRect{0, 0, 1920, 1080}},
 	} {
@@ -29,39 +27,37 @@ func TestMirrorScalingAndPointerMapping(t *testing.T) {
 			t.Errorf("%s: pointer center was displaced", test.mode)
 		}
 	}
-	if got := scaledMirrorRect(1080, 1920, 1080, 2400, image.Rectangle{}, scaleAuto); got != (scaleRect{108, 0, 864, 1920}) {
+	if got := scaledMirrorRect(1080, 1920, 1080, 2400, image.Rectangle{}, scaleManual); got != (scaleRect{108, 0, 864, 1920}) {
 		t.Fatalf("portrait aspect ratio: %+v", got)
 	}
-	if got := scaledMirrorRect(1280, 720, 2400, 1080, crop, scaleAuto); got != (scaleRect{-160, 0, 1600, 720}) {
+	if got := scaledMirrorRect(1280, 720, 2400, 1080, crop, scaleManual); got != (scaleRect{-160, 0, 1600, 720}) {
 		t.Fatalf("resized viewport: %+v", got)
 	}
 }
 
-func TestBlackBarDetection(t *testing.T) {
-	img := image.NewNRGBA(image.Rect(0, 0, 240, 140))
-	want := image.Rect(24, 16, 216, 124)
-	draw.Draw(img, want, &image.Uniform{color.NRGBA{80, 120, 160, 255}}, image.Point{}, draw.Src)
-	if got := blackBarCrop(img); got != want {
-		t.Fatalf("nested bars: %v", got)
+func TestManualSelectionAndOffCenterPointerMapping(t *testing.T) {
+	rendered := scaledMirrorRect(1920, 1080, 2400, 1080, image.Rectangle{}, scaleFit)
+	selection := image.Rect(240, 216, 1440, 864)
+	crop := selectedMirrorCrop(selection, rendered, 2400, 1080)
+	if crop != image.Rect(300, 135, 1800, 945) {
+		t.Fatalf("selection was not mapped to decoded frame: %v", crop)
 	}
-	// A sparse gesture indicator does not hide a real black bar.
-	img.SetNRGBA(0, 70, color.NRGBA{255, 255, 255, 255})
-	if got := blackBarCrop(img); got != want {
-		t.Fatalf("sparse overlay: %v", got)
+	for _, size := range [][2]int{{1920, 1080}, {1280, 720}, {840, 600}} {
+		r := scaledMirrorRect(size[0], size[1], 2400, 1080, crop, scaleManual)
+		// The center of an asymmetric selection maps to its own source center,
+		// rather than to the full phone center. Test both axes and resized views.
+		x, y := (size[0]/2-r.X)*2400/r.W, (size[1]/2-r.Y)*1080/r.H
+		if x < 1049 || x > 1051 || y < 539 || y > 541 {
+			t.Fatalf("%v: pointer mapped to %d,%d, want 1050,540", size, x, y)
+		}
 	}
-	// A substantial control at the edge must remain visible.
-	for y := 40; y < 90; y++ {
-		img.SetNRGBA(0, y, color.NRGBA{255, 255, 255, 255})
+	if got := selectedMirrorCrop(image.Rect(-20, -20, 2000, 1200), rendered, 2400, 1080); got != image.Rect(0, 0, 2400, 1080) {
+		t.Fatalf("borders were not clipped: %v", got)
 	}
-	if got := blackBarCrop(img); got.Min.X != 0 {
-		t.Fatalf("cropped an edge control: %v", got)
-	}
-	if got := blackBarCrop(image.NewNRGBA(img.Bounds())); !got.Empty() {
-		t.Fatal("all-black scene was treated as bars")
-	}
-	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-	if got := blackBarCrop(img); got != img.Bounds() {
-		t.Fatal("cropped a borderless image")
+	for _, selection := range []image.Rectangle{image.Rect(0, 0, 100, 100), image.Rect(240, 240, 245, 245)} {
+		if got := selectedMirrorCrop(selection, rendered, 2400, 1080); !got.Empty() {
+			t.Fatalf("empty/tiny selection accepted: %v", got)
+		}
 	}
 }
 

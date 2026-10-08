@@ -13,12 +13,12 @@ type scaleMode string
 
 const (
 	scaleFit     scaleMode = "保持比例"
-	scaleAuto    scaleMode = "自适应（识别黑边）"
+	scaleManual  scaleMode = "手动选区"
 	scaleFill    scaleMode = "裁剪铺满"
 	scaleStretch scaleMode = "拉伸铺满"
 )
 
-var scaleModes = []string{string(scaleFit), string(scaleAuto), string(scaleFill), string(scaleStretch)}
+var scaleModes = []string{string(scaleFit), string(scaleFill), string(scaleStretch)}
 
 // Only frame dimensions are retained, independently of optional session logs.
 type mirrorFrames struct {
@@ -67,7 +67,8 @@ func scaledMirrorRect(width, height, frameW, frameH int, crop image.Rectangle, m
 	if mode == scaleStretch {
 		return scaleRect{W: width, H: height}
 	}
-	if mode != scaleAuto || crop.Empty() {
+	crop = crop.Intersect(image.Rect(0, 0, frameW, frameH))
+	if mode != scaleManual || crop.Empty() {
 		crop = image.Rect(0, 0, frameW, frameH)
 	}
 	s := math.Min(float64(width)/float64(crop.Dx()), float64(height)/float64(crop.Dy()))
@@ -80,57 +81,20 @@ func scaledMirrorRect(width, height, frameW, frameH int, crop image.Rectangle, m
 	return scaleRect{x, y, w, h}
 }
 
-// Sample whole edge lines instead of a single corner. Allow sparse overlays
-// such as a phone's gesture indicator over a black bar. All-black frames and
-// very small surviving regions leave the previous framing unchanged.
-func blackBarCrop(img image.Image) image.Rectangle {
-	b := img.Bounds()
-	blackLine := func(horizontal bool, pos int) bool {
-		length := b.Dx()
-		if !horizontal {
-			length = b.Dy()
-		}
-		black := 0
-		for n := 0; n < 160; n++ {
-			x, y := b.Min.X+n*(length-1)/159, pos
-			if !horizontal {
-				x, y = pos, b.Min.Y+n*(length-1)/159
-			}
-			r, g, blue, _ := img.At(x, y).RGBA()
-			if r <= 12*257 && g <= 12*257 && blue <= 12*257 {
-				black++
-			}
-		}
-		return black >= 144 // At least 90% near-black; tolerate small edge overlays.
-	}
-	c := b
-	for c.Min.Y < c.Max.Y && blackLine(true, c.Min.Y) {
-		c.Min.Y++
-	}
-	for c.Max.Y > c.Min.Y && blackLine(true, c.Max.Y-1) {
-		c.Max.Y--
-	}
-	for c.Min.X < c.Max.X && blackLine(false, c.Min.X) {
-		c.Min.X++
-	}
-	for c.Max.X > c.Min.X && blackLine(false, c.Max.X-1) {
-		c.Max.X--
-	}
-	if c.Dx() < b.Dx()/3 || c.Dy() < b.Dy()/3 {
+// The selection is made over the complete fitted frame. Convert viewport
+// pixels back to decoded-frame coordinates, clipping any surrounding borders.
+func selectedMirrorCrop(selection image.Rectangle, rendered scaleRect, frameW, frameH int) image.Rectangle {
+	if rendered.W <= 0 || rendered.H <= 0 || frameW <= 0 || frameH <= 0 {
 		return image.Rectangle{}
 	}
-	// Ignore a one-pixel encoder edge.
-	if c.Min.X-b.Min.X < 2 {
-		c.Min.X = b.Min.X
+	selection = selection.Intersect(image.Rect(rendered.X, rendered.Y, rendered.X+rendered.W, rendered.Y+rendered.H))
+	if selection.Dx() < 8 || selection.Dy() < 8 {
+		return image.Rectangle{}
 	}
-	if b.Max.X-c.Max.X < 2 {
-		c.Max.X = b.Max.X
-	}
-	if c.Min.Y-b.Min.Y < 2 {
-		c.Min.Y = b.Min.Y
-	}
-	if b.Max.Y-c.Max.Y < 2 {
-		c.Max.Y = b.Max.Y
-	}
-	return c
+	return image.Rect(
+		(selection.Min.X-rendered.X)*frameW/rendered.W,
+		(selection.Min.Y-rendered.Y)*frameH/rendered.H,
+		((selection.Max.X-rendered.X)*frameW+rendered.W-1)/rendered.W,
+		((selection.Max.Y-rendered.Y)*frameH+rendered.H-1)/rendered.H,
+	)
 }

@@ -7,7 +7,7 @@
 - Windows 10 / 11 x64 中文原生 Go GUI，负责 Android 设备发现、配对、连接和参数选择；投屏由官方 scrcpy 处理。
 - fork：`KevinChen222/scrcpy`，`origin` 指向它，发布目标 `master`；上游 `Genymobile/scrcpy` 使用 `upstream`，不要推送到上游。
 - 本机目录 `D:\codex\scrpy`。现有工作区先检查并保留未提交修改，不重复 clone / fork。
-- 当前交付版本：GUI `v0.6.2` / tag `gui-v0.6.2`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.2)。官方运行包 `v5.0`，依赖以 `gui/go.mod` 为准。
+- 当前交付版本：GUI `v0.6.3` / tag `gui-v0.6.3`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.3)。官方运行包 `v5.0`，依赖以 `gui/go.mod` 为准。
 
 ## 约束与入口
 
@@ -22,7 +22,7 @@
 - 无线 mDNS 区分配对端口和连接端口；保留手动连接。旧版只扫描所选本地 IPv4 网段 TCP 5555，最多 254 地址 / 32 并发 / 250ms；USB 不扫描网络。
 - 启动前验证真实 ADB `device` 状态，检查输出与退出码；保留空 Serial 的多设备去重回归。配对码不记录。
 - 设备按手机身份合并，后台读取并缓存 `device_name` / `ro.serialno`；保留所有 IP:端口及 mDNS 别名，不凭型号、名称或 IP 合并。配对服务独立；选中与会话按身份关联，实际 ADB / scrcpy 使用具体连接。
-- 多设备独立会话，可混用仅音频 / 音视频以及 USB / 无线；同一 ADB 连接不重复启动。单独停止不影响其他设备；停止、异常和 GUI 退出回收自己启动的进程，保留全局 ADB 服务。后台操作可取消，UI 状态仅主线程更新。
+- 多设备独立会话，可混用仅音频 / 音视频以及 USB / 无线；同一 ADB 连接不重复启动。单独停止不影响其他设备；GUI 退出先取消后台操作并等待会话静音 / 亮屏清理，再关闭所用 ADB 服务；Windows 进程组回收自建进程树，含 detached adb 服务。共用 ADB 的其他工具会断开；强制结束不保证手机清理或关闭启动前已有的 ADB 服务。后台操作可取消，UI 状态仅主线程更新。
 - 熄屏会话结束自动恢复亮屏；默认开启结束后媒体静音，通过 ADB 将该设备媒体音量设为 0 并验证，允许启动前取消。UHID 中文由手机输入法处理。纯音频支持 Opus / AAC / FLAC / RAW，后两者不传码率。
 - 自定义单位：分辨率 px、帧率 fps、视频 Mbps、音频 Kbps（6–9000 请求值）、缓存秒（0–60，三位小数）。缓存预设 0.5 / 1 / 2 秒，默认 2 秒，0 关闭额外缓存；仅音频不传视频设置。
 - 日志只在独立窗口打开时收集，关闭清空并停止，不写文件；有界内存、线程安全。沿用紧凑布局、独立滚动和固定开始 / 停止栏。

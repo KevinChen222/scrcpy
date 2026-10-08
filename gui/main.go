@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -505,18 +506,34 @@ func (a *application) finishSession(session *deviceSession, err, restoreErr, mut
 	}
 }
 
+func (a *application) shutdown(cancel context.CancelFunc) {
+	cancel()
+	// Session workers still need ADB to mute media and restore the screen.
+	a.workers.Wait()
+	if a.b != nil {
+		ctx, stop := context.WithTimeout(context.Background(), 3*time.Second)
+		defer stop()
+		if _, err := a.b.run(ctx, "kill-server"); err != nil {
+			a.logs.printf("ERROR 关闭 ADB 服务失败: %v", err)
+		}
+	}
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	b, err := newBackend()
+	if err == nil {
+		err = setupProcessCleanup()
+		if err != nil {
+			b = nil
+		}
+	}
 	a := newApplication(ctx, b)
 	log.SetOutput(a.logs)
-	defer func() {
-		cancel()
-		a.workers.Wait()
-	}()
+	defer a.shutdown(cancel)
 	if err != nil {
-		a.status, a.errorText = "运行文件不完整", err.Error()
+		a.status, a.errorText = "启动失败", err.Error()
 	}
 	mygo.App.SetName("scrcpy LAN")
 	mygo.Theme.SetSource(mygo.ThemeLight)
@@ -541,6 +558,7 @@ func main() {
 		}
 	})
 	if err := mygo.App.Run(); err != nil {
+		a.shutdown(cancel)
 		log.Fatal(err)
 	}
 }

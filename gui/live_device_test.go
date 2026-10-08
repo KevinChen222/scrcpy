@@ -143,7 +143,7 @@ func TestLiveDeviceScreenRestoreAndAudio(t *testing.T) {
 			a.audioPreset, a.customAudio = len(audioPresets), fmt.Sprint(test.bitrate)
 			a.useCustomBuffer, a.customBuffer = true, "0.5"
 			a.setDevices([]device{{Serial: serial, Address: serial, State: "device"}})
-			t.Cleanup(func() { cancel(); a.workers.Wait() })
+			t.Cleanup(func() { a.shutdown(cancel) })
 			a.start()
 			select {
 			case update := <-a.updates:
@@ -196,7 +196,11 @@ func TestLiveDeviceScreenRestoreAndAudio(t *testing.T) {
 			}
 			switch test.ending {
 			case "quit":
-				cancel()
+				a.shutdown(cancel)
+				// Shutdown removes ADB transports; reconnect only for verification.
+				if _, err := b.connect(context.Background(), serial); err != nil {
+					t.Fatalf("reconnect after GUI exit: %v", err)
+				}
 			case "kill":
 				if err := a.selectedSession().cmd.Process.Kill(); err != nil {
 					t.Fatal(err)

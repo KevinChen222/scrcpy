@@ -4,9 +4,9 @@
 
 ## 下载和启动
 
-从 [v0.6.2 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.2) 下载 `scrcpy-lan-v0.6.2-windows-x64.zip`。**完整解压**便携包，双击 `scrcpy-lan.exe`。`runtime` 目录附带官方 scrcpy v5.0、adb 和运行依赖，勿单独移动 exe。发布包未进行代码签名。
+从 [v0.6.3 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.3) 下载 `scrcpy-lan-v0.6.3-windows-x64.zip`。**完整解压**便携包，双击 `scrcpy-lan.exe`。`runtime` 目录附带官方 scrcpy v5.0、adb 和运行依赖，勿单独移动 exe。发布包未进行代码签名。
 
-GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会停止它启动的投屏，不会关闭全局 ADB 服务。
+GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会取消后台操作、停止全部会话，等待结束后静音 / 亮屏清理完成，再关闭所用的 ADB 服务。共用该服务的其他工具会断开，重新执行 ADB 命令即可启动服务。Windows 进程组会在程序退出（包括被强制结束）时回收本程序启动的 scrcpy、adb 及其后台子进程；强制结束无法保证完成手机静音 / 亮屏操作或关闭启动前已存在的 ADB 服务。
 
 GUI 使用绿色叠放手机图标，EXE 文件、主窗口、日志窗口及投屏外层窗口共用该图标。图标嵌入 EXE，便携使用无需单独的图标文件。
 
@@ -156,12 +156,12 @@ GUI 位于独立的 `gui/` Go 模块，使用官方 scrcpy 命令行参数与 AD
 cd gui
 go test ./...
 go vet ./...
-.\build.ps1 -GuiVersion v0.6.2
+.\build.ps1 -GuiVersion v0.6.3
 ```
 
-输出为 `gui/build/scrcpy-lan-v0.6.2-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
+输出为 `gui/build/scrcpy-lan-v0.6.3-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
 
-测试覆盖 mDNS / ADB 解析、连接别名与物理身份合并、同型号手机隔离、名称缓存与失败回退、刷新选中和会话防重、地址及配对码校验、拒绝未授权连接、子进程参数和取消，以及原生界面的设备 / 档位选择。真实手机投屏仍需在自己的局域网和手机上验证。
+测试覆盖 mDNS / ADB 解析、连接别名与物理身份合并、同型号手机隔离、名称缓存与失败回退、刷新选中和会话防重、地址及配对码校验、拒绝未授权连接、子进程参数和取消、退出时先完成会话清理再关闭 ADB、正常 / 强制退出回收后台进程树且保留无关进程，以及原生界面的设备 / 档位选择。真实手机投屏仍需在自己的局域网和手机上验证。
 
 设备列表真机验证：将便携包的 `runtime` 加入 PATH，设置 `$env:SCRCPY_GUI_DEVICE_LIST_TEST_SERIAL = '已授权设备连接标识'`，运行 `go test -buildvcs=false -count=1 -run TestLiveDeviceListAndRefresh -v .`。检查实际手机名称、IP / mDNS 合并、视频解码、运行中刷新与防重复启动，再停止测试会话；不启用熄屏或结束后静音。运行普通测试前清除该环境变量。
 

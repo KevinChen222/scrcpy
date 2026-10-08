@@ -18,9 +18,17 @@ func TestMultiDeviceSessionsStopAndQuit(t *testing.T) {
 	t.Setenv("SCRCPY_GUI_TEST_CHILD", "wait")
 	ctx, cancel := context.WithCancel(context.Background())
 	muted := make(chan string, 3)
+	adbStopped := false
 	b := &backend{adb: exe, scrcpy: exe, run: func(ctx context.Context, args ...string) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
+		}
+		if len(args) == 1 && args[0] == "kill-server" {
+			if len(muted) != 1 {
+				t.Fatal("ADB stopped before session cleanup finished")
+			}
+			adbStopped = true
+			return "", nil
 		}
 		if len(args) > 4 && args[3] == "cmd" {
 			muted <- args[1]
@@ -73,8 +81,10 @@ func TestMultiDeviceSessionsStopAndQuit(t *testing.T) {
 	if serial := <-muted; serial != "phone-a" {
 		t.Fatalf("wrong device muted: %s", serial)
 	}
-	cancel()
-	a.workers.Wait()
+	a.shutdown(cancel)
+	if !adbStopped {
+		t.Fatal("GUI exit left the ADB server running")
+	}
 	if serial := <-muted; serial != "phone-b" {
 		t.Fatalf("quit muted wrong device: %s", serial)
 	}

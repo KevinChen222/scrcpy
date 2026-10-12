@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -82,8 +83,8 @@ func TestMultiDeviceSessionsStopAndQuit(t *testing.T) {
 		t.Fatalf("wrong device muted: %s", serial)
 	}
 	a.shutdown(cancel)
-	if !adbStopped {
-		t.Fatal("GUI exit left the ADB server running")
+	if adbStopped != (runtime.GOOS != "linux") {
+		t.Fatal("GUI exit did not follow the platform's ADB ownership policy")
 	}
 	if serial := <-muted; serial != "phone-b" {
 		t.Fatalf("quit muted wrong device: %s", serial)

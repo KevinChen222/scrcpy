@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -637,12 +638,17 @@ func (b *backend) pair(ctx context.Context, value, code string) error {
 	if len(code) != 6 || strings.Trim(code, "0123456789") != "" {
 		return fmt.Errorf("请输入手机显示的 6 位配对码")
 	}
-	out, err := b.run(ctx, "pair", address, code)
+	return b.pairPassword(ctx, address, code)
+}
+
+// QR pairing uses a generated password rather than the six-digit manual code.
+func (b *backend) pairPassword(ctx context.Context, address, password string) error {
+	out, err := b.run(ctx, "pair", address, password)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s", strings.ReplaceAll(err.Error(), password, "[配对码已隐藏]"))
 	}
 	if !strings.Contains(out, "Successfully paired") {
-		return fmt.Errorf("配对失败: %s", strings.TrimSpace(out))
+		return fmt.Errorf("配对失败: %s", strings.TrimSpace(strings.ReplaceAll(out, password, "[配对码已隐藏]")))
 	}
 	return nil
 }
@@ -694,15 +700,39 @@ func (b *backend) start(ctx context.Context, serial string, p preset, playback p
 	if b.logs.isEnabled() {
 		args = append(args, "--verbosity=debug")
 	}
-	cmd := exec.CommandContext(ctx, b.scrcpy, args...)
+	command, commandArgs := b.scrcpy, args
+	if runtime.GOOS == "linux" && !playback.AudioOnly && playback.Frames != nil {
+		// The official Linux client buffers stdout when it is a pipe. Window
+		// attachment needs the Texture dimensions before its startup timeout,
+		// including when the user already made the SDL window fullscreen.
+		stdbuf, err := exec.LookPath("stdbuf")
+		if err != nil {
+			return nil, nil, fmt.Errorf("投屏窗口需要 stdbuf（GNU coreutils）以实时读取画面尺寸: %w", err)
+		}
+		command, commandArgs = stdbuf, append([]string{"-oL", b.scrcpy}, args...)
+	}
+	// stdbuf execs scrcpy, so the session PID and process-group cleanup stay
+	// attached to the actual client rather than an intermediate shell.
+	cmd := exec.CommandContext(ctx, command, commandArgs...)
 	cmd.Dir = filepath.Dir(b.scrcpy)
-	cmd.Env = append(os.Environ(), "ADB="+b.adb, "SCRCPY_SERVER_PATH="+filepath.Join(cmd.Dir, "scrcpy-server"))
+	cmd.Env = append(os.Environ(), "ADB="+b.adb)
+	if runtime.GOOS == "linux" && !playback.AudioOnly {
+		cmd.Env = append(cmd.Env, "SDL_VIDEODRIVER=x11")
+	}
+	// Portable packages keep the server beside scrcpy. System installations
+	// locate it themselves, and an explicit user override takes precedence.
+	if os.Getenv("SCRCPY_SERVER_PATH") == "" {
+		server := filepath.Join(cmd.Dir, "scrcpy-server")
+		if info, err := os.Stat(server); err == nil && !info.IsDir() {
+			cmd.Env = append(cmd.Env, "SCRCPY_SERVER_PATH="+server)
+		}
+	}
 	hideConsole(cmd)
 	output := b.logs
 	if output == nil {
 		output = &sessionLog{}
 	}
-	output.printf("scrcpy %s", strings.Join(cmd.Args[1:], " "))
+	output.printf("scrcpy %s", strings.Join(args, " "))
 	cmd.Stdout, cmd.Stderr = output, output
 	if playback.Frames != nil {
 		cmd.Stdout = io.MultiWriter(output, playback.Frames)

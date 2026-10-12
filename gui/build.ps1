@@ -1,6 +1,6 @@
 param(
     [ValidatePattern('^v\d+\.\d+\.\d+([-.][a-zA-Z0-9.]+)?$')]
-    [string]$GuiVersion = 'v0.6.3'
+    [string]$GuiVersion = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,8 +9,8 @@ $root = [IO.Path]::GetFullPath($PSScriptRoot)
 $build = Join-Path $root 'build'
 $name = "scrcpy-lan-$GuiVersion-windows-x64"
 $package = Join-Path $build $name
-$runtimeVersion = 'v5.0'
-$runtimeHash = '44c10d9e82f20ea67227d14d37bf9fbe3603117c5736df3f514544a02ba20a73'
+$runtimeVersion = 'v5.0.1'
+$runtimeHash = 'b12a2c4ee8be317422451fc7dcf8ee20a71b5ea7ef9ad73ddd825a25316227a5'
 $runtimeURL = "https://github.com/Genymobile/scrcpy/releases/download/$runtimeVersion/scrcpy-win64-$runtimeVersion.zip"
 
 function Invoke-Go {

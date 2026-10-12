@@ -4,9 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
+	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/egoist/mygo"
@@ -55,6 +59,8 @@ type application struct {
 	pairAddress     string
 	pairCode        string
 	showPair        bool
+	pairQRMode      bool
+	pairQR          *qrPairState
 	busy            bool
 	cancelJob       context.CancelFunc
 	sessions        []*deviceSession
@@ -164,7 +170,7 @@ func (a *application) setMode(wired bool) {
 	if wired {
 		a.preset = len(presets) - 1
 	}
-	a.showPair, a.pairCode = false, ""
+	a.closePair()
 	a.setDevices(a.devices)
 }
 
@@ -245,8 +251,11 @@ func (a *application) connect() {
 }
 
 func (a *application) pair() {
+	if a.busy || a.b == nil {
+		return
+	}
 	address, code := a.pairAddress, a.pairCode
-	a.pairCode, a.showPair = "", false
+	a.closePair()
 	a.work("正在配对…", func(ctx context.Context) (func(), error) {
 		if err := a.b.pair(ctx, address, code); err != nil {
 			return nil, err
@@ -510,7 +519,7 @@ func (a *application) shutdown(cancel context.CancelFunc) {
 	cancel()
 	// Session workers still need ADB to mute media and restore the screen.
 	a.workers.Wait()
-	if a.b != nil {
+	if a.b != nil && runtime.GOOS != "linux" {
 		ctx, stop := context.WithTimeout(context.Background(), 3*time.Second)
 		defer stop()
 		if _, err := a.b.run(ctx, "kill-server"); err != nil {
@@ -520,7 +529,12 @@ func (a *application) shutdown(cancel context.CancelFunc) {
 }
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	// Window reparenting requires GTK and SDL to use the same X11 display.
+	// Wayland desktops can run this version through XWayland.
+	if runtime.GOOS == "linux" && os.Getenv("DISPLAY") != "" {
+		os.Setenv("GDK_BACKEND", "x11")
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	b, err := newBackend()
 	if err == nil {
@@ -539,6 +553,7 @@ func main() {
 	mygo.Theme.SetSource(mygo.ThemeLight)
 	mygo.App.OnBeforeQuit(func(_ *mygo.QuitEvent) { cancel() })
 	mygo.App.WhenReady(func() {
+		go func() { <-ctx.Done(); mygo.App.Quit() }()
 		workArea := mygo.Screen.PrimaryDisplay().WorkArea
 		width, height := min(1080, workArea.Width-40), min(880, workArea.Height-40)
 		win := mygo.NewWindow(mygo.WindowOptions{

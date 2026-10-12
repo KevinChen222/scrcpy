@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -165,7 +166,7 @@ drain:
 						})
 						ui.Column(c).Padding(16).Gap(10).Background(t.Background).Radius(12).Border(1, t.Border).Children(func() {
 							ui.Text(c, "首次无线配对").FontSize(17).Bold()
-							ui.Text(c, "Android 11+：打开无线调试 → 使用配对码配对设备。配对端口与连接端口不同。").FontSize(12).TextColor(t.TextMuted)
+							ui.Text(c, "Android 11+：支持二维码扫码或 6 位配对码配对。").FontSize(12).TextColor(t.TextMuted)
 							if ui.Button(c, "打开配对").Disabled(disabled).Clicked() {
 								a.showPair = true
 							}
@@ -259,7 +260,7 @@ drain:
 								ui.Text(c, "设置用于下次启动，不影响运行中的设备。更改已有设备档位需单独停止后重启。").FontSize(12).TextColor(t.TextMuted)
 							}
 						})
-						ui.Column(c).Gap(10).Children(func() {
+						ui.Column(c).Gap(6).Children(func() {
 							ui.Text(c, "播放设置").FontSize(19).Bold()
 							bufferLabel := "音视频缓存"
 							if a.playback.AudioOnly {
@@ -293,6 +294,9 @@ drain:
 								ui.TextInput(c, &a.customBuffer).Label("缓存时间（秒，0–60）").Placeholder("例如 0.5；0 关闭额外缓存").Disabled(settingsDisabled).FillWidth()
 							}
 							ui.Text(c, "缓存缓解抖动并增加延迟，默认 2 秒。自定义支持三位小数；下次启动时生效。").FontSize(12).TextColor(t.TextMuted)
+							if !a.playback.AudioOnly {
+								ui.Select(c, &a.playback.ScaleMode, scaleModes).Label("画面缩放模式").Disabled(settingsDisabled).FillWidth()
+							}
 							ui.Checkbox(c, &a.playback.TurnScreenOff, "启动后熄灭设备屏幕（关闭屏幕电源）").Disabled(settingsDisabled)
 							ui.Text(c, "勾选熄屏后，结束时自动请求重新亮屏。").FontSize(12).TextColor(t.TextMuted)
 							ui.Checkbox(c, &a.playback.MuteOnStop, "结束后静音设备媒体声音").Disabled(settingsDisabled)
@@ -300,9 +304,8 @@ drain:
 							if !a.playback.AudioOnly {
 								ui.Text(c, "熄屏后继续投屏和操作；Alt+O 熄屏，Alt+Shift+O 亮屏。手机实体电源键会重新亮屏。").FontSize(12).TextColor(t.TextMuted)
 								ui.Checkbox(c, &a.playback.KeyboardUHID, "电脑键盘输入（UHID，支持手机输入法）").Disabled(settingsDisabled)
-								ui.Text(c, "点击投屏中的输入框后打字；中文由手机输入法处理。首次按 Alt+K 配置实体键盘。不兼容时取消勾选，恢复基础键盘输入。").FontSize(12).TextColor(t.TextMuted)
+								ui.Text(c, "点击手机输入框后打字，中文由手机输入法处理。Alt+K 配置实体键盘；不兼容时取消勾选。").FontSize(12).TextColor(t.TextMuted)
 								ui.Checkbox(c, &a.playback.Fullscreen, "投屏启动时全屏（覆盖任务栏）").Disabled(settingsDisabled)
-								ui.Select(c, &a.playback.ScaleMode, scaleModes).Label("画面缩放模式").Disabled(settingsDisabled).FillWidth()
 								ui.Text(c, "F11 全屏后，Alt+Z → 选择显示区域，鼠标拖选后自动放大。Esc 取消选区或退出全屏。").FontSize(12).TextColor(t.TextMuted)
 							}
 						})
@@ -356,23 +359,57 @@ drain:
 				ui.TextArea(c, &a.errorText).ReadOnly(true).Height(100).TextColor(t.Danger).Label("错误详情")
 			}
 		})
-		ui.Text(c, fmt.Sprintf("scrcpy + mygo  ·  H.264  ·  Windows 便携版  ·  %s", version)).FontSize(11).TextColor(t.TextMuted)
+		platform := "Windows"
+		if runtime.GOOS == "linux" {
+			platform = "Linux"
+		}
+		ui.Text(c, fmt.Sprintf("scrcpy + mygo  ·  H.264  ·  %s 便携版  ·  %s", platform, version)).FontSize(11).TextColor(t.TextMuted)
 	})
 	ui.Modal(c, &a.showPair, func() {
-		ui.Column(c).Width(420).Gap(14).Children(func() {
+		ui.Column(c).Width(420).Gap(10).Children(func() {
 			ui.Text(c, "配对 Android 设备").FontSize(22).Bold()
-			ui.Text(c, "在手机的无线调试中打开「使用配对码配对设备」，填写该页面的 IP:端口及 6 位配对码。").TextColor(t.TextMuted)
-			ui.TextInput(c, &a.pairAddress).Label("配对地址").Placeholder("例如 192.168.1.10:40123").FillWidth()
-			ui.TextInput(c, &a.pairCode).Label("配对码").Placeholder("6 位配对码").Password().FillWidth()
-			ui.Text(c, "配对端口与投屏连接端口不同。").FontSize(12).TextColor(t.TextMuted)
+			ui.Row(c).Gap(10).Children(func() {
+				if ui.Button(c, "二维码配对").Disabled(disabled && a.pairQR == nil).Clicked() && !a.pairQRMode {
+					a.pairQRMode = true
+					a.startQRPair()
+				}
+				if ui.Button(c, "配对码配对").Clicked() && a.pairQRMode {
+					a.cancelQRPair()
+					a.pairQRMode = false
+				}
+			})
+			if a.pairQRMode {
+				ui.Text(c, "手机与电脑连接同一 Wi-Fi，打开无线调试 →「使用二维码配对设备」扫描下方二维码。").FontSize(12).TextColor(t.TextMuted)
+				if q := a.pairQR; q != nil {
+					if q.bitmap != nil {
+						ui.Row(c).FillWidth().Justify(ui.Center).Children(func() {
+							ui.Image(c, q.bitmap).Width(240).Height(240)
+						})
+					}
+					ui.Text(c, q.message).FontSize(12).TextColor(t.TextMuted)
+				}
+			} else {
+				ui.Text(c, "在手机的无线调试中打开「使用配对码配对设备」，填写该页面的 IP:端口及 6 位配对码。").TextColor(t.TextMuted)
+				ui.TextInput(c, &a.pairAddress).Label("配对地址").Placeholder("例如 192.168.1.10:40123").FillWidth()
+				ui.TextInput(c, &a.pairCode).Label("配对码").Placeholder("6 位配对码").Password().FillWidth()
+				ui.Text(c, "配对端口与投屏连接端口不同。").FontSize(12).TextColor(t.TextMuted)
+			}
 			ui.Row(c).Gap(10).Justify(ui.End).Children(func() {
 				if ui.Button(c, "取消").Clicked() {
-					a.showPair, a.pairCode = false, ""
+					a.closePair()
 				}
-				if ui.PrimaryButton(c, "配对设备").Disabled(disabled || a.pairAddress == "" || a.pairCode == "").Clicked() {
+				if a.pairQRMode {
+					if ui.PrimaryButton(c, "重新生成二维码").Disabled(a.busy || a.b == nil).Clicked() {
+						a.startQRPair()
+					}
+				} else if ui.PrimaryButton(c, "配对设备").Disabled(disabled || a.pairAddress == "" || a.pairCode == "").Clicked() {
 					a.pair()
 				}
 			})
 		})
 	})
+	// Modal also closes on Escape or a click outside its panel.
+	if !a.showPair && (a.pairQR != nil || a.pairCode != "") {
+		a.closePair()
+	}
 }

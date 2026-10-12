@@ -1,4 +1,4 @@
-name: GUI Windows
+name: GUI Windows and Linux
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  portable:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
@@ -22,10 +22,48 @@ jobs:
           cache-dependency-path: gui/go.sum
       - name: Test and build portable package
         shell: pwsh
-        run: ./gui/build.ps1 -GuiVersion v0.6.3
+        run: ./gui/build.ps1
       - uses: actions/upload-artifact@v7
         with:
           name: scrcpy-lan-windows-x64
+          if-no-files-found: error
           path: |
-            gui/build/scrcpy-lan-v0.6.3-windows-x64.zip
-            gui/build/scrcpy-lan-v0.6.3-windows-x64.sha256
+            gui/build/scrcpy-lan-*-windows-x64.zip
+            gui/build/scrcpy-lan-*-windows-x64.sha256
+  linux:
+    runs-on: ubuntu-24.04
+    env:
+      CGO_ENABLED: '0'
+      GOMODCACHE: ${{ github.workspace }}/.tools/linux-go-mod
+      GOCACHE: ${{ github.workspace }}/.tools/linux-go-cache
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: gui/go.mod
+          cache-dependency-path: gui/go.sum
+      - name: Install native desktop test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libxtst6 libgl1 libegl1 xvfb openbox
+      - name: Test and build portable package
+        run: ./gui/build-linux.sh
+      - name: Check X11 fullscreen and selection at 100% and 200% scale
+        working-directory: gui
+        run: |
+          xvfb-run -a -s '-screen 0 2400x1800x24' bash -eu -c '
+            openbox > /tmp/scrcpy-lan-openbox.log 2>&1 &
+            wm_pid=$!
+            trap "kill $wm_pid 2>/dev/null || true" EXIT
+            sleep 1
+            for scale in 1 2; do
+              GDK_SCALE=$scale SCRCPY_GUI_LINUX_NATIVE_TEST=1 go test -buildvcs=false -count=1 -run "^TestLinuxMirrorNative$" -timeout=75s -v .
+            done
+          '
+      - uses: actions/upload-artifact@v7
+        with:
+          name: scrcpy-lan-linux-x64
+          if-no-files-found: error
+          path: |
+            gui/build/scrcpy-lan-*-linux-x64.tar.gz
+            gui/build/scrcpy-lan-*-linux-x64.sha256

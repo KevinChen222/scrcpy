@@ -4,18 +4,19 @@
 
 ## 项目
 
-- Windows 10 / 11 x64 中文原生 Go GUI，负责 Android 设备发现、配对、连接和参数选择；投屏由官方 scrcpy 处理。
+- 同时维护 Windows 10 / 11 x64 与 Linux x64 中文原生 Go GUI，负责 Android 设备发现、配对、连接和参数选择；投屏由官方 scrcpy 处理。每个 Release 发布同一版本的两个平台包及各自 SHA-256。
 - fork：`KevinChen222/scrcpy`，`origin` 指向它，发布目标 `master`；上游 `Genymobile/scrcpy` 使用 `upstream`，不要推送到上游。
 - 本机目录 `D:\codex\scrpy`。现有工作区先检查并保留未提交修改，不重复 clone / fork。
-- 当前交付版本：GUI `v0.6.3` / tag `gui-v0.6.3`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.3)。官方运行包 `v5.0`，依赖以 `gui/go.mod` 为准。
+- 当前维护版本：GUI `v0.7.3` / tag `gui-v0.7.3`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.3)。上次公开版本为 `v0.6.3`（2026-10-12 已核对）。本版 修复 Linux 高 DPI 桌面下画面挤在左上角的问题：GTK 逻辑尺寸按当前缩放倍率转换为 X11 像素，选区保留逻辑坐标。保留 `stdbuf -oL` 实时读取画面尺寸以避免启动约 15 秒超时退出；官方运行包保持原样。沿用二维码配对、Linux 支持和官方 `v5.0.1`，依赖以 `gui/go.mod` 为准；Linux 修复已由用户实测确认，用户已授权推送并发布 Windows / Linux 双平台包。
 
 ## 约束与入口
 
 - 保持 mygo 原生 UI、`CGO_ENABLED=0` 和便携包；不要增加浏览器、登录、云服务或自动更新。
 - GUI 改动集中在 `gui/` 和 GUI 工作流；不修改上游 `app/` / `server/`，正常更新合并 `upstream/master`。运行包升级核对官方版本、SHA-256、参数兼容性和许可；破坏性更新才适配 GUI。
 - `main.go`：主线程状态、后台任务、会话生命周期；`view.go`：中文界面；`backend.go`：ADB / 发现 / 进程；`presets.go`：参数与校验；`logs.go`：按需日志窗口。
+- `pair_qr.go`：Android 二维码协议、随机临时凭据、严格匹配本次扫码 mDNS 服务；二维码等待 2 分钟超时，关闭 / 切换 / 退出取消。二维码密码与配对码均不记录。
 - `mirror_scale.go`：比例、手动选区和坐标；`mirror_window_windows.go` / `mirror_shortcuts_windows.go` / `mirror_selection_windows.go`：各设备独立嵌入官方 scrcpy 的原生投屏窗口、缩放菜单、全屏和拖选。只改 GUI，官方 runtime 保持原样。
-- `gui/README.md`：完整功能、使用与测试说明；`gui/release-notes.md`：最终版本主要更新；`gui/build.ps1` 和 `.github/workflows/gui.yml`：便携构建与 CI。
+- `gui/VERSION`：两平台统一默认版本。`gui/README.md` / `gui/README-linux.md`：通用与平台说明；`gui/release-notes.md`：最终更新；`gui/build.ps1` / `gui/build-linux.sh`：Windows / Linux 便携构建；`.github/workflows/gui.yml`：同一提交的双平台 CI，Linux 含 100% / 200% X11 原生回归。
 
 ## 必须保留的行为
 
@@ -31,10 +32,10 @@
 ## 更新与发布
 
 1. 检查 Git 状态、远端、目标分支和现有 Release；只改需求相关内容，简短中文说明改动与验证。
-2. 本地测试使用本地构建。Go 命令在 `gui/` 运行；格式化改动后执行 `./build.ps1 -GuiVersion vX.Y.Z`（含测试 / vet / 编译 / 官方校验 / 打包），不无理由重复检查。
-3. UI 检查中文、默认 / 最小布局与交互、真实 Windows 启动；生命周期改动尽量用授权真机验证。模拟或截图不等于真机成功，明确实际验证边界。
-4. 同步构建默认版本、工作流参数 / 资产路径、README 下载与发布说明；精简更新本文。版本 `vX.Y.Z`，tag `gui-vX.Y.Z`，资产 `scrcpy-lan-vX.Y.Z-windows-x64.zip` 与 `.sha256`，完整包含 runtime、说明和许可。
-5. 默认先交付本地包，等用户实测确认；**用户明确要求推送到 GitHub / 发布即已有授权**。提交推送到 fork 的目标分支后，由 GitHub Actions 针对该提交重新构建一次。等待对应 GUI Windows CI 成功，下载该次 CI 生成的 ZIP 和 `.sha256`，核对后用于 Release；不直接上传本地构建包。再创建新 tag / Release（`--verify-tag --notes-file gui/release-notes.md`）。不强推、不覆盖 tag。
-6. 核对 Release 已发布、两项资产 uploaded、服务端 ZIP SHA-256 与该次 CI 产物一致；中文报告下载链接、验证与真实剩余限制。
+2. 本地测试使用本地构建。Go 命令在 `gui/` 运行；格式化后按平台执行 `./build.ps1 -GuiVersion vX.Y.Z` 或 `./build-linux.sh vX.Y.Z`（含测试 / vet / 编译 / 官方校验 / 打包），不无理由重复检查。默认版本均取自 `gui/VERSION`。
+3. UI 检查中文、默认 / 最小布局与交互、对应平台真实启动；Linux 投屏检查逻辑坐标和像素转换、100% / 200% 缩放、三种缩放、全屏 / 还原及选区。生命周期改动尽量用授权真机验证。模拟或截图不等于真机成功，明确各平台实际验证边界。
+4. 更新 `gui/VERSION`、两平台 README 下载与发布说明；精简更新本文。版本 `vX.Y.Z`，tag `gui-vX.Y.Z`；资产 `scrcpy-lan-vX.Y.Z-windows-x64.zip` / `.sha256` 与 `scrcpy-lan-vX.Y.Z-linux-x64.tar.gz` / `.sha256`，两个包均完整包含 runtime、说明和许可。
+5. 默认先交付本地包，等用户实测确认；**用户明确要求推送到 GitHub / 发布即已有授权**。提交推送到 fork 的目标分支后，由 GitHub Actions 针对该提交重新构建一次。等待对应 GUI Windows / Linux 两项 CI 成功，下载该次 CI 生成的 ZIP、tar.gz 及两个 `.sha256`，核对后用于同一 Release；不直接上传本地构建包。再创建新 tag / Release（`--verify-tag --notes-file gui/release-notes.md`）。不强推、不覆盖 tag。
+6. 核对 Release 已发布、四项资产 uploaded、服务端 ZIP / tar.gz SHA-256 与该次 CI 产物一致；中文报告两平台下载链接、CI 验证与各平台真实剩余限制。
 
 文件检查优先 FastCtx；Windows 用 PowerShell 7、结构化参数和退出码检查。登录失效让用户本机运行 `gh auth login`，不索取 token。沙箱按平台处理；Git 信任仅限已核实的具体仓库。

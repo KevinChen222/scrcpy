@@ -2,11 +2,18 @@
 
 基于 [scrcpy](https://github.com/Genymobile/scrcpy) 的社区 fork，新增使用 [mygo](https://github.com/egoist/mygo) 原生 Go UI 的局域网投屏启动器。初版面向 Windows 10 / 11 x64，界面使用 Direct3D 11 绘制，不需要浏览器、WebView2、Node.js 或额外安装 Go。
 
+Linux 原生版本的构建、启动和平台差异见 [README-linux.md](README-linux.md)。Linux 版复用同一操作台和会话逻辑，投屏窗口使用 GTK / X11，运行包使用官方 Linux scrcpy。
+
 ## 下载和启动
 
-从 [v0.6.3 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.6.3) 下载 `scrcpy-lan-v0.6.3-windows-x64.zip`。**完整解压**便携包，双击 `scrcpy-lan.exe`。`runtime` 目录附带官方 scrcpy v5.0、adb 和运行依赖，勿单独移动 exe。发布包未进行代码签名。
+从 [v0.7.3 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.3) 下载适合平台的便携包及同名 `.sha256`：
 
-GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会取消后台操作、停止全部会话，等待结束后静音 / 亮屏清理完成，再关闭所用的 ADB 服务。共用该服务的其他工具会断开，重新执行 ADB 命令即可启动服务。Windows 进程组会在程序退出（包括被强制结束）时回收本程序启动的 scrcpy、adb 及其后台子进程；强制结束无法保证完成手机静音 / 亮屏操作或关闭启动前已存在的 ADB 服务。
+- [Windows x64 ZIP](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-windows-x64.zip)：完整解压后双击 `scrcpy-lan.exe`。
+- [Linux x64 tar.gz](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-linux-x64.tar.gz)：解压后运行 `./start.sh`，依赖与桌面说明见 [README-linux.md](README-linux.md)。
+
+两个包均包含原样官方 scrcpy v5.0.1、adb、说明及许可证，保留整个 `runtime` 目录。Windows 包未进行代码签名。v0.7.3 修复 Linux 高 DPI 显示与音视频 / F11 全屏启动超时，支持二维码配对。
+
+GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会取消后台操作、停止全部会话，等待结束后静音 / 亮屏清理完成。Windows 随后关闭所用的 ADB 服务，共用该服务的其他工具会断开，重新执行 ADB 命令即可启动服务；Linux 保留共享的 ADB 服务。Windows 进程组会在程序退出（包括被强制结束）时回收本程序启动的 scrcpy、adb 及其后台子进程；强制结束无法保证完成手机静音 / 亮屏操作或关闭启动前已存在的 ADB 服务。
 
 GUI 使用绿色叠放手机图标，EXE 文件、主窗口、日志窗口及投屏外层窗口共用该图标。图标嵌入 EXE，便携使用无需单独的图标文件。
 
@@ -76,9 +83,12 @@ UHID 可用于无线和 USB。旧设备若出现 UHID 权限 / 不支持错误�
 ## Android 11 及以上
 
 1. 手机和电脑连接同一个 Wi-Fi，手机开启「开发者选项 → 无线调试」。
-2. 首次使用，手机进入「使用配对码配对设备」。GUI 点击「重新扫描」，选择发现的配对服务，或点击「打开配对」，在弹窗里填写配对页面的 IP:端口和 6 位配对码，点击「配对设备」。
+2. 首次使用，GUI 点击「打开配对」→「二维码配对」，手机进入无线调试 →「使用二维码配对设备」扫描电脑上的二维码。程序自动查找本次扫码对应的配对服务并配对，无需填写 IP、端口或配对码。二维码每次随机生成，等待 2 分钟后过期，可点击「重新生成二维码」；关闭弹窗、按 Esc、点击弹窗外部、切换到配对码或退出程序都会取消等待。
+   也可使用「配对码配对」：手机进入「使用配对码配对设备」，在 GUI 填写该页面的 IP:端口和 6 位配对码，点击「配对设备」；重新扫描后选择配对服务会自动填写配对地址。
 3. GUI 选择「无线 / 局域网」。配对成功后，选择连接服务和投屏档位，点击「开始投屏」。USB 设备在「USB 有线」模式中显示。
 4. 如果路由器阻止 mDNS，使用「手动连接」，填写**无线调试主页**上的 IP:端口。这个连接端口与配对码页面的配对端口不同，切换无线调试后也可能变化。
+
+扫码请使用无线调试中的专用扫码入口。二维码模式依赖 mDNS；若手机已经扫码但一直等待，检查同一 Wi-Fi、VPN、防火墙或路由器的设备隔离，或切换到配对码模式手动配对。二维码凭据只用于本次配对，不保存到文件，日志隐藏密码。
 
 手机必须开启无线调试并允许连接；程序无法发现或投屏未开启 ADB 的普通局域网手机。Windows 提示网络访问时需允许 adb 在私人网络中通信。访客 Wi-Fi、AP 隔离、VPN 或防火墙可能阻止发现 / 连接。[Android 官方无线调试说明](https://developer.android.com/tools/adb#wireless-android11-command-line)
 
@@ -150,18 +160,22 @@ GUI 位于独立的 `gui/` Go 模块，使用官方 scrcpy 命令行参数与 AD
 
 ## 从源码构建
 
-需要 Go 1.27.1+ 和 PowerShell 7。mygo 固定在 `869768d02d9154d5b2f9f3a6ebb39767f8f96983`，投屏运行包固定为官方 scrcpy v5.0 并检查 SHA-256。
+需要 Go 1.27.2+ 和 PowerShell 7。mygo 固定为 v0.4.5，图像库为 v0.47.0，二维码库为 `go.mod` 固定版本；投屏运行包固定为官方 scrcpy v5.0.1 并检查 SHA-256。
 
 ```powershell
 cd gui
 go test ./...
 go vet ./...
-.\build.ps1 -GuiVersion v0.6.3
+.\build.ps1 -GuiVersion v0.7.3
 ```
 
-输出为 `gui/build/scrcpy-lan-v0.6.3-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
+输出为 `gui/build/scrcpy-lan-v0.7.3-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
+
+仓库同时维护 Windows / Linux，共用 `gui/VERSION` 定义默认 GUI 版本。Windows 运行 `./gui/build.ps1`，Linux 运行 `./gui/build-linux.sh`；两个脚本仍支持显式传入版本。`.github/workflows/gui.yml` 在同一提交上分别测试、vet、构建和校验两平台运行包，Linux 另做 100% / 200% 缩放的 X11 全屏与选区回归。发布时等待两项 CI 成功，再上传该次 CI 的两个包及各自 `.sha256`，不直接上传本地包；每个 Release 同时包含两平台资产。
 
 测试覆盖 mDNS / ADB 解析、连接别名与物理身份合并、同型号手机隔离、名称缓存与失败回退、刷新选中和会话防重、地址及配对码校验、拒绝未授权连接、子进程参数和取消、退出时先完成会话清理再关闭 ADB、正常 / 强制退出回收后台进程树且保留无关进程，以及原生界面的设备 / 档位选择。真实手机投屏仍需在自己的局域网和手机上验证。
+
+二维码定向回归：`go test -buildvcs=false -run 'TestQR|TestPairValidation|TestNativeView' .`，覆盖凭据随机性、严格匹配扫码服务、配对 / 连接端口隔离、失败与密码隐藏、超时、取消 / Esc / 弹窗外部关闭、模式切换和退出。设置 `SCRCPY_GUI_QR_SCREENSHOT` 可保存最小尺寸界面预览，普通测试不操作手机；真实扫码配对需要手机实测。
 
 设备列表真机验证：将便携包的 `runtime` 加入 PATH，设置 `$env:SCRCPY_GUI_DEVICE_LIST_TEST_SERIAL = '已授权设备连接标识'`，运行 `go test -buildvcs=false -count=1 -run TestLiveDeviceListAndRefresh -v .`。检查实际手机名称、IP / mDNS 合并、视频解码、运行中刷新与防重复启动，再停止测试会话；不启用熄屏或结束后静音。运行普通测试前清除该环境变量。
 

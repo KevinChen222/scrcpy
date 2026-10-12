@@ -48,6 +48,8 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libxtst6 libgl1 libegl1 xvfb openbox
       - name: Test and build portable package
         run: ./gui/build-linux.sh
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Check X11 fullscreen and selection at 100% and 200% scale
         working-directory: gui
         run: |

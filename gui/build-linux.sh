@@ -14,7 +14,12 @@ runtime_version=v5.0.1
 runtime_hash=9f969d30cc574816077edecda65719c1c70b0aee1df1ba5fa00779ac07b8fd6e
 archive="$root/build/scrcpy-linux-x86_64-$runtime_version.tar.gz"
 if [[ ! -f "$archive" ]]; then
-    curl --fail --location --retry 2 --output "$archive.partial" "https://github.com/Genymobile/scrcpy/releases/download/$runtime_version/scrcpy-linux-x86_64-$runtime_version.tar.gz"
+    if command -v gh >/dev/null 2>&1 && [[ -n "${GH_TOKEN:-}" ]]; then
+        # CI can use the release API instead of a cached public redirect.
+        gh release download "$runtime_version" --repo Genymobile/scrcpy --pattern "scrcpy-linux-x86_64-$runtime_version.tar.gz" --output "$archive.partial"
+    else
+        curl --fail --location --retry 2 --output "$archive.partial" "https://github.com/Genymobile/scrcpy/releases/download/$runtime_version/scrcpy-linux-x86_64-$runtime_version.tar.gz"
+    fi
     mv -- "$archive.partial" "$archive"
 fi
 printf '%s  %s\n' "$runtime_hash" "$archive" | sha256sum --check --status

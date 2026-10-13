@@ -3,7 +3,7 @@
 Linux 原生 GUI，沿用 Windows 版的设备发现、配对和会话管理。
 GTK 3 / OpenGL 绘制操作台，官方 scrcpy v5.0.1 负责视频、音频、手机键鼠和剪贴板；不在 Go 中复制视频帧。
 
-下载 [v0.7.3 Linux x64 便携包](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-linux-x64.tar.gz) 和 [SHA-256](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-linux-x64.sha256)。每个 [GUI Release](https://github.com/KevinChen222/scrcpy/releases) 同时提供 Windows / Linux 包，使用同一 GUI 版本。
+下载 [v0.7.4 Linux x64 便携包](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.4/scrcpy-lan-v0.7.4-linux-x64.tar.gz) 和 [SHA-256](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.4/scrcpy-lan-v0.7.4-linux-x64.sha256)。每个 [GUI Release](https://github.com/KevinChen222/scrcpy/releases) 同时提供 Windows / Linux 包，使用同一 GUI 版本。
 
 ## 本机启动
 
@@ -39,7 +39,9 @@ GTK 3 / OpenGL 绘制操作台，官方 scrcpy v5.0.1 负责视频、音频、�
 普通投屏窗口中的 Esc 仍交给 scrcpy，用于手机返回。**Alt+Q** 结束当前投屏。
 全屏时菜单栏隐藏，Alt+Z 仍可使用。
 
-v0.7.3 修复高 DPI 桌面下画面挤在左上角、右侧和下方留下大片黑区的问题：GTK 逻辑尺寸按当前显示缩放倍率转换成 X11 像素尺寸，手动选区仍使用 GTK 逻辑坐标。保持比例、裁剪铺满、拉伸及全屏 / 还原均按实际视口显示。
+v0.7.4 与 Windows 同步升级到 mygo v0.4.6，引入裁剪渲染、文字布局缓存和焦点状态优化。Go 1.27.2 与官方 scrcpy v5.0.1 保持不变，音视频仍由官方 scrcpy 处理。
+
+保留 v0.7.3 的修复：高 DPI 桌面下画面挤在左上角、右侧和下方留下大片黑区的问题：GTK 逻辑尺寸按当前显示缩放倍率转换成 X11 像素尺寸，手动选区仍使用 GTK 逻辑坐标。保持比例、裁剪铺满、拉伸及全屏 / 还原均按实际视口显示。
 
 保留 v0.7.2 的启动超时修复：通过 `stdbuf -oL` 实时读取官方 scrcpy 的画面尺寸，避免输出管道缓冲导致约 15 秒后会话退出。官方运行包保持原样；关闭日志窗口仍停止收集日志。
 
@@ -61,7 +63,7 @@ Linux 退出不会关闭共享的 ADB 服务，避免影响 Android Studio 等�
 
 ## 构建及验证
 
-需要 Go 1.27.2+、curl、tar、sha256sum，使用固定版本 mygo v0.4.5 和官方 scrcpy v5.0.1。
+需要 Go 1.27.2+、curl、tar、sha256sum，使用固定版本 mygo v0.4.6 和官方 scrcpy v5.0.1。
 运行包来源及校验值见 `build-linux.sh`。
 
 ```bash

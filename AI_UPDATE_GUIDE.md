@@ -6,8 +6,8 @@
 
 - 同时维护 Windows 10 / 11 x64 与 Linux x64 中文原生 Go GUI，负责 Android 设备发现、配对、连接和参数选择；投屏由官方 scrcpy 处理。每个 Release 发布同一版本的两个平台包及各自 SHA-256。
 - fork：`KevinChen222/scrcpy`，`origin` 指向它，发布目标 `master`；上游 `Genymobile/scrcpy` 使用 `upstream`，不要推送到上游。
-- 本机目录 `D:\codex\scrpy`。现有工作区先检查并保留未提交修改，不重复 clone / fork。
-- 当前维护版本：GUI `v0.7.3` / tag `gui-v0.7.3`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.3)。上次公开版本为 `v0.6.3`（2026-10-12 已核对）。本版 修复 Linux 高 DPI 桌面下画面挤在左上角的问题：GTK 逻辑尺寸按当前缩放倍率转换为 X11 像素，选区保留逻辑坐标。保留 `stdbuf -oL` 实时读取画面尺寸以避免启动约 15 秒超时退出；官方运行包保持原样。沿用二维码配对、Linux 支持和官方 `v5.0.1`，依赖以 `gui/go.mod` 为准；Linux 修复已由用户实测确认，用户已授权推送并发布 Windows / Linux 双平台包。
+- 当前 Linux 本机目录 `/home/kevin-chen/project/scrcpy`，历史 Windows 目录 `D:\codex\scrpy`。现有工作区先检查并保留未提交修改，不重复 clone / fork；本机分支可能不是 `master`，推送前核对目标。
+- 当前维护版本：GUI `v0.7.4` / tag `gui-v0.7.4`；[Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.4)。上次公开版本为 `v0.7.3`（2026-10-13 已核对）。本版 Windows / Linux 同步将 mygo 升至 `v0.4.6`，引入裁剪渲染、文字布局缓存和焦点状态优化；Go `1.27.2` 与官方 scrcpy `v5.0.1` 不变。保留 GTK 逻辑尺寸到 X11 像素的高 DPI 转换、逻辑选区及 `stdbuf -oL` 实时尺寸读取，官方 runtime 原样保留。本次本机仅能验证 Linux：本地便携构建、X11 100% / 200% 模拟投屏回归、GTK 主界面 / 二维码 / 日志窗口及启动退出通过；未连接授权手机，Windows 实机与本次真机操作未验证。用户已授权本地验证后推送至 fork，由同一提交的双平台 CI 构建并发布。
 
 ## 约束与入口
 

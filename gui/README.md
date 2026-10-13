@@ -6,12 +6,12 @@ Linux 原生版本的构建、启动和平台差异见 [README-linux.md](README-
 
 ## 下载和启动
 
-从 [v0.7.3 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.3) 下载适合平台的便携包及同名 `.sha256`：
+从 [v0.7.4 Release](https://github.com/KevinChen222/scrcpy/releases/tag/gui-v0.7.4) 下载适合平台的便携包及同名 `.sha256`：
 
-- [Windows x64 ZIP](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-windows-x64.zip)：完整解压后双击 `scrcpy-lan.exe`。
-- [Linux x64 tar.gz](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.3/scrcpy-lan-v0.7.3-linux-x64.tar.gz)：解压后运行 `./start.sh`，依赖与桌面说明见 [README-linux.md](README-linux.md)。
+- [Windows x64 ZIP](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.4/scrcpy-lan-v0.7.4-windows-x64.zip)：完整解压后双击 `scrcpy-lan.exe`。
+- [Linux x64 tar.gz](https://github.com/KevinChen222/scrcpy/releases/download/gui-v0.7.4/scrcpy-lan-v0.7.4-linux-x64.tar.gz)：解压后运行 `./start.sh`，依赖与桌面说明见 [README-linux.md](README-linux.md)。
 
-两个包均包含原样官方 scrcpy v5.0.1、adb、说明及许可证，保留整个 `runtime` 目录。Windows 包未进行代码签名。v0.7.3 修复 Linux 高 DPI 显示与音视频 / F11 全屏启动超时，支持二维码配对。
+两个包均包含原样官方 scrcpy v5.0.1、adb、说明及许可证，保留整个 `runtime` 目录。Windows 包未进行代码签名。v0.7.4 将两平台 mygo 从 v0.4.5 升级到 v0.4.6，引入裁剪渲染、文字布局缓存和焦点状态优化；保留 Linux 高 DPI / 全屏修复及二维码配对。不增加浏览器、自动更新或 mygo 音频功能。
 
 GUI 用于设备发现、配对、档位选择和投屏窗口缩放；视频解码、声音和手机键鼠控制由原版 scrcpy 处理。关闭 GUI 会取消后台操作、停止全部会话，等待结束后静音 / 亮屏清理完成。Windows 随后关闭所用的 ADB 服务，共用该服务的其他工具会断开，重新执行 ADB 命令即可启动服务；Linux 保留共享的 ADB 服务。Windows 进程组会在程序退出（包括被强制结束）时回收本程序启动的 scrcpy、adb 及其后台子进程；强制结束无法保证完成手机静音 / 亮屏操作或关闭启动前已存在的 ADB 服务。
 
@@ -160,16 +160,16 @@ GUI 位于独立的 `gui/` Go 模块，使用官方 scrcpy 命令行参数与 AD
 
 ## 从源码构建
 
-需要 Go 1.27.2+ 和 PowerShell 7。mygo 固定为 v0.4.5，图像库为 v0.47.0，二维码库为 `go.mod` 固定版本；投屏运行包固定为官方 scrcpy v5.0.1 并检查 SHA-256。
+需要 Go 1.27.2+ 和 PowerShell 7。mygo 固定为 v0.4.6，图像库为 v0.47.0，二维码库为 `go.mod` 固定版本；投屏运行包固定为官方 scrcpy v5.0.1 并检查 SHA-256。
 
 ```powershell
 cd gui
 go test ./...
 go vet ./...
-.\build.ps1 -GuiVersion v0.7.3
+.\build.ps1 -GuiVersion v0.7.4
 ```
 
-输出为 `gui/build/scrcpy-lan-v0.7.3-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
+输出为 `gui/build/scrcpy-lan-v0.7.4-windows-x64.zip` 和对应 `.sha256`。构建脚本先使用固定版本 `github.com/akavel/rsrc@v0.10.2` 将 `assets/icon.ico` 生成为 Windows 图标资源，再验证测试、使用 `CGO_ENABLED=0` 编译并移除原生 UI 调试检查器，然后附带运行文件和许可证。生成的 `icon_windows_amd64.syso` 不提交；图标源 PNG 和含 16–256 px 多尺寸的 ICO 位于 `assets/`。开发时可将 `runtime` 放到开发版 exe 旁，或把 adb / scrcpy 加入 PATH。
 
 仓库同时维护 Windows / Linux，共用 `gui/VERSION` 定义默认 GUI 版本。Windows 运行 `./gui/build.ps1`，Linux 运行 `./gui/build-linux.sh`；两个脚本仍支持显式传入版本。`.github/workflows/gui.yml` 在同一提交上分别测试、vet、构建和校验两平台运行包，Linux 另做 100% / 200% 缩放的 X11 全屏与选区回归。发布时等待两项 CI 成功，再上传该次 CI 的两个包及各自 `.sha256`，不直接上传本地包；每个 Release 同时包含两平台资产。
 

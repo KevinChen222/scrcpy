@@ -84,9 +84,10 @@ func (b *backend) pairQR(ctx context.Context, q qrCredentials, interval time.Dur
 // Owned by the UI thread. Credentials are captured only by the worker; the
 // application retains the displayed bitmap until completion or cancellation.
 type qrPairState struct {
-	bitmap  *ui.Bitmap
-	running bool
-	message string
+	bitmap    *ui.Bitmap
+	running   bool
+	message   string
+	expiresAt time.Time
 }
 
 func (a *application) startQRPair() {
@@ -103,7 +104,7 @@ func (a *application) startQRPair() {
 		return
 	}
 	a.pairCode = ""
-	session := &qrPairState{bitmap: bitmap, running: true, message: "等待扫码，二维码 2 分钟内有效…"}
+	session := &qrPairState{bitmap: bitmap, running: true, message: "等待扫码，二维码 2 分钟内有效…", expiresAt: time.Now().Add(qrPairTimeout)}
 	a.pairQR = session
 	a.work("正在等待手机扫码配对…", func(ctx context.Context) (func(), error) {
 		pairCtx, cancel := context.WithTimeout(ctx, qrPairTimeout)

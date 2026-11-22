@@ -17,12 +17,33 @@ type sessionLog struct {
 	mu      sync.Mutex
 	enabled bool
 	data    []byte
+	onWrite func()
 }
 
 func (l *sessionLog) setEnabled(enabled bool) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.enabled, l.data = enabled, nil
+	cb := l.onWrite
+	l.mu.Unlock()
+	if enabled && cb != nil {
+		cb()
+	}
+}
+
+func (l *sessionLog) setOnWrite(fn func()) {
+	l.mu.Lock()
+	l.onWrite = fn
+	l.mu.Unlock()
+}
+
+func (l *sessionLog) clear() {
+	l.mu.Lock()
+	l.data = nil
+	cb := l.onWrite
+	l.mu.Unlock()
+	if cb != nil {
+		cb()
+	}
 }
 
 func (l *sessionLog) isEnabled() bool {
@@ -34,12 +55,21 @@ func (l *sessionLog) isEnabled() bool {
 	return l.enabled
 }
 
+func (l *sessionLog) byteLen() int {
+	if l == nil {
+		return 0
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.data)
+}
+
 func (l *sessionLog) Write(p []byte) (int, error) {
 	if l == nil {
 		return len(p), nil
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	var cb func()
 	if l.enabled {
 		l.data = append(l.data, p...)
 		if len(l.data) > 65536 {
@@ -48,6 +78,11 @@ func (l *sessionLog) Write(p []byte) (int, error) {
 				l.data = l.data[1:]
 			}
 		}
+		cb = l.onWrite
+	}
+	l.mu.Unlock()
+	if cb != nil {
+		cb()
 	}
 	return len(p), nil
 }
@@ -78,22 +113,55 @@ func (a *application) openLogWindow() {
 		a.logs.printf("ERROR %s", a.errorText)
 	}
 	var scroll ui.ScrollState
-	a.logWindow = mygo.NewWindow(mygo.WindowOptions{
-		Title: "scrcpy LAN · 实时日志", Width: 800, Height: 500,
-		MinWidth: 480, MinHeight: 280, TitleBarStyle: mygo.TitleBarDefault,
+	win := mygo.NewWindow(mygo.WindowOptions{
+		Title: "scrcpy LAN · 实时日志", Width: 820, Height: 520,
+		MinWidth: 500, MinHeight: 300, TitleBarStyle: mygo.TitleBarDefault,
 		Content: ui.View(func(c *ui.Context) {
-			c.After(100 * time.Millisecond)
+			p := applyTheme(c, a.darkMode)
 			text := a.logs.String()
-			if scroll.Y >= scroll.MaxY {
+			usedKB := float64(a.logs.byteLen()) / 1024
+			if scroll.Y >= scroll.MaxY-4 {
 				scroll.Y = math.MaxFloat32
 			}
-			ui.Column(c).Fill().Padding(16).Gap(10).Children(func() {
-				ui.Text(c, "实时日志 · 关闭后停止收集并清空，不写入文件；保留最近 64 KiB。").FontSize(12)
-				ui.TextArea(c, &text).ReadOnly(true).FillWidth().Grow(1).TrackScroll(&scroll)
+			ui.Column(c).Fill().Padding(16).Gap(12).Background(p.canvas).Children(func() {
+				ui.Row(c).Gap(10).AlignItems(ui.Center).Children(func() {
+					livePulseDot(c, p.live, 10)
+					ui.Text(c, "实时日志").FontSize(17).Bold().TextColor(p.title)
+					ui.Badge(c, fmt.Sprintf("%.1f / 64 KiB", usedKB)).
+						Background(p.accentSoft).TextColor(p.accent).
+						ContentTransition(ui.ContentTransition{Numeric: true})
+					ui.Box(c).Grow(1)
+					copyBtn := ui.Button(c, "").Disabled(text == "").Tooltip("复制当前日志到剪贴板").Children(func() {
+						ui.Icon(c, iconCopy).FontSize(13)
+						ui.Text(c, "复制日志").SingleLine()
+					})
+					if copyBtn.Clicked() {
+						c.WriteClipboard(text)
+						c.Toast("已复制实时日志")
+					}
+					clearBtn := ui.Button(c, "").Disabled(text == "").Tooltip("清空当前窗口日志并继续收集").Children(func() {
+						ui.Icon(c, iconTrash).FontSize(13)
+						ui.Text(c, "清空").SingleLine()
+					})
+					if clearBtn.Clicked() {
+						a.logs.clear()
+					}
+				})
+				ui.Text(c, "仅在窗口开启时收集，关闭后立即停止并清空，不写入文件；自动保留最近 64 KiB。").
+					FontSize(12).TextColor(p.muted)
+				ui.Box(c).Grow(1).FillWidth().Padding(8).Radius(12).
+					Background(p.card).Border(1, p.border).
+					Shadow(0, 2, 10, 0, p.cardShadow).
+					Children(func() {
+						ui.TextArea(c, &text).ReadOnly(true).FillWidth().Grow(1).TrackScroll(&scroll)
+					})
 			})
 		}),
 	})
-	a.logWindow.OnClosed(func() {
+	a.logWindow = win
+	a.logs.setOnWrite(win.Invalidate)
+	win.OnClosed(func() {
+		a.logs.setOnWrite(nil)
 		a.logs.setEnabled(false)
 		a.logWindow = nil
 	})

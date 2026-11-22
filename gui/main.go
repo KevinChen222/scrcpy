@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,7 +40,9 @@ type application struct {
 	ctx             context.Context
 	b               *backend
 	updates         chan func()
+	notify          atomic.Pointer[func()]
 	workers         sync.WaitGroup
+	darkMode        bool
 	networks        []string
 	network         string
 	devices         []device
@@ -83,10 +86,35 @@ func newApplication(ctx context.Context, b *backend) *application {
 	return a
 }
 
+func (a *application) setNotify(fn func()) {
+	if fn == nil {
+		a.notify.Store(nil)
+		return
+	}
+	a.notify.Store(&fn)
+}
+
 func (a *application) post(update func()) {
 	select {
 	case a.updates <- update:
+		if fn := a.notify.Load(); fn != nil && *fn != nil {
+			(*fn)()
+		}
 	case <-a.ctx.Done():
+	}
+}
+
+func (a *application) setDarkMode(dark bool) {
+	a.darkMode = dark
+	if mygo.App.IsReady() {
+		if dark {
+			mygo.Theme.SetSource(mygo.ThemeDark)
+		} else {
+			mygo.Theme.SetSource(mygo.ThemeLight)
+		}
+		if a.logWindow != nil {
+			a.logWindow.Invalidate()
+		}
 	}
 }
 
@@ -491,7 +519,11 @@ func (a *application) finishSession(session *deviceSession, err, restoreErr, mut
 		}
 	}
 	a.setDevices(a.devices)
-	a.status, a.detail = session.serial+" 会话已结束", ""
+	label := session.name
+	if label == "" {
+		label = session.serial
+	}
+	a.status, a.detail, a.errorText = label+" 会话已结束", "", ""
 	if len(a.sessions) > 0 {
 		a.detail = fmt.Sprintf("其他 %d 台设备继续运行。", len(a.sessions))
 	}
@@ -562,11 +594,12 @@ func main() {
 			TitleBarStyle: mygo.TitleBarDefault, Content: ui.View(a.view),
 		})
 		a.window = win
+		a.setNotify(win.Invalidate)
 		win.OnEnterFullScreen(win.Invalidate)
 		win.OnLeaveFullScreen(win.Invalidate)
 		win.OnMaximize(win.Invalidate)
 		win.OnUnmaximize(win.Invalidate)
-		win.OnClosed(func() { cancel(); mygo.App.Quit() })
+		win.OnClosed(func() { a.setNotify(nil); cancel(); mygo.App.Quit() })
 		if b != nil {
 			a.discover()
 			win.Invalidate()

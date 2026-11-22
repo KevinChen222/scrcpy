@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -472,5 +473,49 @@ func TestCustomBufferAndAudioCodecs(t *testing.T) {
 	tt.Type("4")
 	if a.customBuffer != "4" {
 		t.Fatal("running device blocked the next session's buffer settings")
+	}
+}
+
+func TestThemeToggleAndMotionSettles(t *testing.T) {
+	a := newApplication(context.Background(), &backend{})
+	a.networks, a.network = []string{"192.168.1.0/24"}, "192.168.1.0/24"
+	a.devices = []device{
+		{Name: "Pixel 9", Address: "192.168.1.10:37123", State: "device", Source: "无线调试"},
+	}
+	a.selected = a.devices[0].key()
+	tt := ui.NewTester(a.view, 1080, 880)
+	if a.darkMode {
+		t.Fatal("light theme must be the default")
+	}
+	if err := tt.Click("切换深色外观"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.darkMode {
+		t.Fatal("theme toggle did not enable dark mode")
+	}
+	if err := tt.Click("高清 · 60 fps"); err != nil {
+		t.Fatal(err)
+	}
+	// Advance time past spring/color transitions so motion settles completely.
+	tt.Advance(time.Second)
+	if path := os.Getenv("SCRCPY_GUI_DARK_SCREENSHOT"); path != "" {
+		file, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer file.Close()
+		if err := png.Encode(file, tt.Image()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tt.Click("切换浅色外观"); err != nil {
+		t.Fatal(err)
+	}
+	if a.darkMode {
+		t.Fatal("theme toggle did not return to light mode")
+	}
+	tt.Advance(time.Second)
+	if tt.FramePending() {
+		t.Fatal("idle view kept requesting animation frames after transitions settled")
 	}
 }

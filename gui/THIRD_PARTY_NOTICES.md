@@ -8,6 +8,7 @@ This is a community fork of Genymobile/scrcpy, not an official Genymobile releas
 - **purego** — Apache-2.0, https://github.com/ebitengine/purego.
 - **go-text/typesetting** — Unlicense or BSD-3-Clause, https://github.com/go-text/typesetting.
 - **golang.org/x/image** — BSD-3-Clause, https://go.googlesource.com/image.
+- **golang.org/x/text** — BSD-3-Clause, https://go.googlesource.com/text.
 - **go-qrcode** — MIT, https://github.com/skip2/go-qrcode. Generates Android wireless-debugging pairing QR codes locally.
 
 The portable package includes each Go dependency's license in `licenses/`.
